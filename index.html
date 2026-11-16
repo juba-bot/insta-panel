@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Insta Panel">
+<meta name="theme-color" content="#0f1115">
+<meta name="referrer" content="no-referrer">
+<title>Insta Panel</title>
+<style>
+:root{--bg:#0f1115;--card:#181b22;--line:#262a34;--text:#eef0f4;--mut:#8b92a1;--acc:#ff5c8a;--acc2:#ffb347;--ok:#4cd39a;--bad:#ff6b6b}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+body{padding:calc(env(safe-area-inset-top) + 12px) 14px calc(env(safe-area-inset-bottom) + 84px)}
+h1{font-size:20px;margin:0}h2{font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);margin:22px 2px 8px;font-weight:600}
+p{margin:0 0 10px}a{color:var(--acc)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px}
+.row{display:flex;align-items:center;gap:12px}
+.grow{flex:1;min-width:0}
+.mut{color:var(--mut)}.small{font-size:12.5px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.stat b{display:block;font-size:22px;font-weight:700;letter-spacing:-.01em}
+.stat span{font-size:12.5px;color:var(--mut)}
+.delta{font-size:12px;font-weight:600}.up{color:var(--ok)}.down{color:var(--bad)}
+.avatar{width:54px;height:54px;border-radius:50%;object-fit:cover;background:var(--line)}
+button,input,textarea{font:inherit;color:inherit}
+.btn{display:block;width:100%;border:0;border-radius:12px;padding:13px;background:linear-gradient(90deg,var(--acc),var(--acc2));color:#16090d;font-weight:700}
+.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--text);font-weight:500}
+.btn:disabled{opacity:.5}
+textarea{width:100%;min-height:92px;background:#0b0d11;border:1px solid var(--line);border-radius:12px;padding:10px;font-size:13px;word-break:break-all}
+ol{padding-left:20px;margin:6px 0 12px}li{margin-bottom:6px}
+.chips{display:flex;gap:8px;overflow-x:auto;padding:2px 0 10px;scrollbar-width:none}
+.chips::-webkit-scrollbar{display:none}
+.chip{flex:none;border:1px solid var(--line);background:transparent;border-radius:999px;padding:7px 13px;font-size:13px;color:var(--mut)}
+.chip.on{background:var(--text);color:var(--bg);border-color:var(--text);font-weight:600}
+.post{display:flex;gap:12px;padding:12px 0;border-bottom:1px solid var(--line);text-decoration:none;color:inherit}
+.post:last-child{border-bottom:0}
+.thumb{width:64px;height:84px;border-radius:10px;object-fit:cover;background:var(--line);flex:none}
+.cap{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}
+.nums{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12.5px;color:var(--mut);margin-top:4px}
+.nums b{color:var(--text);font-weight:600}
+.rank{font-size:12px;color:var(--acc2);font-weight:700}
+.bar{height:8px;border-radius:4px;background:var(--line);overflow:hidden;margin-top:6px}
+.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--acc),var(--acc2))}
+nav{position:fixed;left:0;right:0;bottom:0;display:flex;background:rgba(15,17,21,.94);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-top:1px solid var(--line);padding:6px 8px calc(env(safe-area-inset-bottom) + 6px)}
+nav button{flex:1;background:none;border:0;padding:9px 4px;color:var(--mut);font-size:12.5px;border-radius:10px}
+nav button.on{color:var(--text);font-weight:700;background:var(--card)}
+.msg{border-radius:12px;padding:11px 13px;margin:10px 0;font-size:13.5px;background:#2a1a1f;border:1px solid #5a2a36}
+.spin{width:26px;height:26px;border:3px solid var(--line);border-top-color:var(--acc);border-radius:50%;animation:s 0.8s linear infinite;margin:60px auto 14px}
+@keyframes s{to{transform:rotate(360deg)}}
+svg{display:block;width:100%;height:auto}
+.hide{display:none!important}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<nav id="nav" class="hide">
+  <button data-v="ozet">Özet</button>
+  <button data-v="gonderiler">Gönderiler</button>
+  <button data-v="zaman">En iyi zaman</button>
+  <button data-v="ayarlar">Ayarlar</button>
+</nav>
+<script>
+"use strict";
+var API = "https://graph.instagram.com";
+var DAY = 86400000;
+var app = document.getElementById("app");
+var nav = document.getElementById("nav");
+var state = { view: "ozet", sort: "views", data: null, loading: false, error: "" };
+
+/* ---------- küçük yardımcılar ---------- */
+function store(k, v) {
+  try {
+    if (v === undefined) { var r = localStorage.getItem(k); return r ? JSON.parse(r) : null; }
+    if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, JSON.stringify(v));
+  } catch (e) {}
+  return null;
+}
+function h(tag, attrs, kids) {
+  var el = document.createElement(tag);
+  if (attrs) Object.keys(attrs).forEach(function (k) {
+    var v = attrs[k];
+    if (v == null || v === false) return;
+    if (k === "text") el.textContent = v;
+    else if (k.slice(0, 2) === "on") el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v);
+  });
+  (kids || []).forEach(function (c) { if (c) el.appendChild(typeof c === "string" ? document.createTextNode(c) : c); });
+  return el;
+}
+function num(n) {
+  if (n == null || isNaN(n)) return "–";
+  if (n >= 1e6) return (n / 1e6).toFixed(1).replace(".0", "") + " Mn";
+  if (n >= 1e4) return (n / 1e3).toFixed(1).replace(".0", "") + " B";
+  return Math.round(n).toLocaleString("tr-TR");
+}
+function pct(n) { return n == null || !isFinite(n) ? "–" : "%" + (n * 100).toFixed(1).replace(".", ","); }
+function dateStr(d) { return new Date(d).toLocaleDateString("tr-TR", { day: "numeric", month: "short" }); }
+function dayKey(t) { var d = new Date(t); return d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate(); }
+
+/* ---------- Instagram API ---------- */
+function api(path, params) {
+  var q = Object.keys(params || {}).map(function (k) { return k + "=" + encodeURIComponent(params[k]); });
+  q.push("access_token=" + encodeURIComponent(store("ip_token")));
+  return fetch(API + path + "?" + q.join("&"), { referrerPolicy: "no-referrer" }).then(function (r) {
+    return r.json().then(function (j) {
+      if (j && j.error) { var e = new Error(j.error.message || "API hatası"); e.code = j.error.code; throw e; }
+      return j;
+    });
+  });
+}
+function soft(p) { return p.catch(function () { return null; }); }
+
+function refreshTokenIfNeeded() {
+  var at = store("ip_token_at") || 0;
+  if (Date.now() - at < 7 * DAY) return Promise.resolve();
+  return soft(api("/refresh_access_token", { grant_type: "ig_refresh_token" }).then(function (j) {
+    if (j.access_token) { store("ip_token", j.access_token); store("ip_token_at", Date.now()); }
+  }));
+}
+
+function mediaInsights(m) {
+  function read(j) {
+    var o = {};
+    (j.data || []).forEach(function (d) { o[d.name] = d.values && d.values[0] ? d.values[0].value : (d.total_value ? d.total_value.value : null); });
+    return o;
+  }
+  return api("/" + m.id + "/insights", { metric: "reach,views,saved,shares,total_interactions" }).then(read)
+    .catch(function () { return api("/" + m.id + "/insights", { metric: "reach,saved" }).then(read); })
+    .catch(function () { return {}; });
+}
+function pool(items, size, fn) {
+  var i = 0, out = new Array(items.length);
+  function next() {
+    if (i >= items.length) return Promise.resolve();
+    var n = i++;
+    return fn(items[n]).then(function (r) { out[n] = r; return next(); });
+  }
+  var runners = [];
+  for (var k = 0; k < size; k++) runners.push(next());
+  return Promise.all(runners).then(function () { return out; });
+}
+
+function loadAll() {
+  var until = Math.floor(Date.now() / 1000), since = until - 28 * 86400;
+  var out = {};
+  return refreshTokenIfNeeded().then(function () {
+    return api("/me", { fields: "user_id,username,name,profile_picture_url,followers_count,follows_count,media_count" });
+  }).then(function (me) {
+    out.me = me;
+    return Promise.all([
+      api("/me/media", { fields: "id,caption,media_type,media_product_type,thumbnail_url,media_url,permalink,timestamp,like_count,comments_count", limit: 30 }),
+      soft(api("/me/insights", { metric: "reach", period: "day", since: since, until: until })),
+      soft(api("/me/insights", { metric: "reach", period: "day", metric_type: "total_value", since: since, until: until })),
+      soft(api("/me/insights", { metric: "views", period: "day", metric_type: "total_value", since: since, until: until })),
+      soft(api("/me/insights", { metric: "accounts_engaged", period: "day", metric_type: "total_value", since: since, until: until })),
+      soft(api("/me/insights", { metric: "total_interactions", period: "day", metric_type: "total_value", since: since, until: until }))
+    ]);
+  }).then(function (r) {
+    out.media = (r[0].data || []);
+    var series = r[1] && r[1].data && r[1].data[0] && r[1].data[0].values;
+    out.reachSeries = (series || []).map(function (v) { return { t: v.end_time, v: v.value || 0 }; });
+    function total(j) { return j && j.data && j.data[0] && j.data[0].total_value ? j.data[0].total_value.value : null; }
+    out.totals = { reach: total(r[2]), views: total(r[3]), engaged: total(r[4]), interactions: total(r[5]) };
+    return pool(out.media, 5, mediaInsights);
+  }).then(function (ins) {
+    out.media.forEach(function (m, i) {
+      var x = ins[i] || {};
+      m.reach = x.reach; m.views = x.views; m.saved = x.saved; m.shares = x.shares;
+      m.likes = m.like_count || 0; m.comments = m.comments_count || 0;
+      m.eng = x.total_interactions != null ? x.total_interactions : m.likes + m.comments + (x.saved || 0) + (x.shares || 0);
+      m.rate = m.reach ? m.eng / m.reach : null;
+    });
+    out.at = Date.now();
+    // takipçi geçmişi: her gün için bir kayıt (yalnızca bu telefonda tutulur)
+    var hist = store("ip_hist") || [];
+    var key = dayKey(out.at);
+    hist = hist.filter(function (x) { return x.k !== key; });
+    hist.push({ k: key, t: out.at, f: out.me.followers_count });
+    if (hist.length > 400) hist = hist.slice(-400);
+    store("ip_hist", hist);
+    out.hist = hist;
+    store("ip_cache", out);
+    return out;
+  });
+}
+
+/* ---------- grafik ---------- */
+function lineChart(points, color) {
+  var W = 320, H = 110, P = 6;
+  if (!points || points.length < 2) return h("p", { class: "mut small", text: "Grafik için henüz yeterli veri yok." });
+  var vals = points.map(function (p) { return p.v; });
+  var min = Math.min.apply(null, vals), max = Math.max.apply(null, vals);
+  if (max === min) { max += 1; min -= 1; }
+  var xy = points.map(function (p, i) {
+    return [P + i * (W - 2 * P) / (points.length - 1), H - P - (p.v - min) * (H - 2 * P) / (max - min)];
+  });
+  var line = xy.map(function (p) { return p[0].toFixed(1) + "," + p[1].toFixed(1); }).join(" ");
+  var ns = "http://www.w3.org/2000/svg";
+  var svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+  var area = document.createElementNS(ns, "polygon");
+  area.setAttribute("points", P + "," + (H - P) + " " + line + " " + (W - P) + "," + (H - P));
+  area.setAttribute("fill", color); area.setAttribute("opacity", ".14");
+  var pl = document.createElementNS(ns, "polyline");
+  pl.setAttribute("points", line); pl.setAttribute("fill", "none"); pl.setAttribute("stroke", color);
+  pl.setAttribute("stroke-width", "2.2"); pl.setAttribute("stroke-linejoin", "round"); pl.setAttribute("stroke-linecap", "round");
+  svg.appendChild(area); svg.appendChild(pl);
+  var wrap = h("div", null, [svg]);
+  wrap.appendChild(h("div", { class: "row small mut", style: "justify-content:space-between;margin-top:4px" }, [
+    h("span", { text: dateStr(points[0].t) }),
+    h("span", { text: "en düşük " + num(Math.min.apply(null, vals)) + " · en yüksek " + num(Math.max.apply(null, vals)) }),
+    h("span", { text: dateStr(points[points.length - 1].t) })
+  ]));
+  return wrap;
+}
+
+/* ---------- ekranlar ---------- */
+function stat(label, value, extra) {
+  return h("div", { class: "card stat" }, [h("b", { text: value }), h("span", { text: label }), extra]);
+}
+function followerDelta(hist, days) {
+  if (!hist || hist.length < 2) return null;
+  var last = hist[hist.length - 1], target = last.t - days * DAY, base = null;
+  for (var i = hist.length - 2; i >= 0; i--) { base = hist[i]; if (hist[i].t <= target) break; }
+  if (!base || last.t - base.t < DAY / 2) return null;
+  return { d: last.f - base.f, days: Math.max(1, Math.round((last.t - base.t) / DAY)) };
+}
+
+function viewOzet(d) {
+  var me = d.me, box = h("div");
+  box.appendChild(h("div", { class: "card row" }, [
+    me.profile_picture_url ? h("img", { class: "avatar", src: me.profile_picture_url, alt: "", referrerpolicy: "no-referrer" }) : h("div", { class: "avatar" }),
+    h("div", { class: "grow" }, [
+      h("h1", { text: "@" + (me.username || "") }),
+      h("div", { class: "mut small", text: (me.name ? me.name + " · " : "") + num(me.media_count) + " gönderi" })
+    ])
+  ]));
+  var fd = followerDelta(d.hist, 7), deltaEl = null;
+  if (fd) deltaEl = h("div", { class: "delta " + (fd.d >= 0 ? "up" : "down"), text: (fd.d >= 0 ? "+" : "") + num(fd.d).replace("–", "0") + " · son " + fd.days + " gün" });
+  var posts = d.media, withReach = posts.filter(function (m) { return m.rate != null; });
+  var avgRate = withReach.length ? withReach.reduce(function (s, m) { return s + m.rate; }, 0) / withReach.length : null;
+
+  box.appendChild(h("h2", { text: "Hesap" }));
+  box.appendChild(h("div", { class: "grid" }, [
+    stat("Takipçi", num(me.followers_count), deltaEl),
+    stat("Takip edilen", num(me.follows_count)),
+    stat("Ort. etkileşim oranı", pct(avgRate), h("div", { class: "small mut", text: "son " + withReach.length + " gönderi, erişime göre" })),
+    stat("Gönderi başı ort. etkileşim", num(posts.length ? posts.reduce(function (s, m) { return s + m.eng; }, 0) / posts.length : null))
+  ]));
+
+  box.appendChild(h("h2", { text: "Son 28 gün" }));
+  var t = d.totals || {};
+  box.appendChild(h("div", { class: "grid" }, [
+    stat("Görüntülenme", num(t.views)), stat("Erişilen hesap", num(t.reach)),
+    stat("Etkileşen hesap", num(t.engaged)), stat("Toplam etkileşim", num(t.interactions))
+  ]));
+  if (t.views == null && t.reach == null) box.appendChild(h("p", { class: "mut small", style: "margin-top:8px", text: "Bu veriler gelmedi. Hesabın profesyonel (içerik üretici/işletme) olması ve token'da istatistik izninin bulunması gerekir." }));
+
+  box.appendChild(h("h2", { text: "Günlük erişim" }));
+  box.appendChild(h("div", { class: "card" }, [lineChart(d.reachSeries, "#ff5c8a")]));
+
+  box.appendChild(h("h2", { text: "Takipçi geçmişi" }));
+  var fh = (d.hist || []).map(function (x) { return { t: x.t, v: x.f }; });
+  box.appendChild(h("div", { class: "card" }, [
+    lineChart(fh, "#4cd39a"),
+    h("p", { class: "mut small", style: "margin:8px 0 0", text: "Uygulamayı açtığın her gün bir kayıt eklenir (" + fh.length + " kayıt). Düzenli açtıkça grafik dolar." })
+  ]));
+  return box;
+}
+
+var SORTS = [["views", "Görüntülenme"], ["reach", "Erişim"], ["eng", "Etkileşim"], ["rate", "Etkileşim oranı"], ["saved", "Kaydetme"], ["shares", "Paylaşım"], ["time", "En yeni"]];
+function viewGonderiler(d) {
+  var box = h("div");
+  box.appendChild(h("h2", { text: "Son " + d.media.length + " gönderi" }));
+  box.appendChild(h("div", { class: "chips" }, SORTS.map(function (s) {
+    return h("button", { class: "chip" + (state.sort === s[0] ? " on" : ""), text: s[1], onclick: function () { state.sort = s[0]; render(); } });
+  })));
+  var key = state.sort;
+  var list = d.media.slice().sort(function (a, b) {
+    if (key === "time") return new Date(b.timestamp) - new Date(a.timestamp);
+    return (b[key] == null ? -1 : b[key]) - (a[key] == null ? -1 : a[key]);
+  });
+  var top = key === "time" ? 0 : Math.max.apply(null, list.map(function (m) { return m[key] || 0; }));
+  var card = h("div", { class: "card", style: "padding:2px 14px" });
+  list.forEach(function (m, i) {
+    var img = m.thumbnail_url || (m.media_type !== "VIDEO" ? m.media_url : null);
+    var kind = m.media_product_type === "REELS" ? "Reels" : m.media_type === "CAROUSEL_ALBUM" ? "Kaydırmalı" : m.media_type === "VIDEO" ? "Video" : "Fotoğraf";
+    card.appendChild(h("a", { class: "post", href: m.permalink || "#", target: "_blank", rel: "noopener noreferrer" }, [
+      img ? h("img", { class: "thumb", src: img, alt: "", loading: "lazy", referrerpolicy: "no-referrer" }) : h("div", { class: "thumb" }),
+      h("div", { class: "grow" }, [
+        h("div", { class: "rank", text: "#" + (i + 1) + " · " + kind + " · " + dateStr(m.timestamp) }),
+        h("div", { class: "cap", text: (m.caption || "(açıklama yok)").split("\n")[0] }),
+        h("div", { class: "nums" }, [
+          h("span", null, [h("b", { text: num(m.views) }), " görüntülenme"]),
+          h("span", null, [h("b", { text: num(m.reach) }), " erişim"]),
+          h("span", null, [h("b", { text: num(m.likes) }), " beğeni"]),
+          h("span", null, [h("b", { text: num(m.comments) }), " yorum"]),
+          h("span", null, [h("b", { text: num(m.saved) }), " kaydetme"]),
+          h("span", null, [h("b", { text: num(m.shares) }), " paylaşım"]),
+          h("span", null, [h("b", { text: pct(m.rate) }), " oran"])
+        ]),
+        top > 0 ? h("div", { class: "bar" }, [h("i", { style: "width:" + Math.max(2, 100 * (m[key] || 0) / top).toFixed(1) + "%" })]) : null
+      ])
+    ]));
+  });
+  if (!list.length) card.appendChild(h("p", { class: "mut", style: "padding:14px 0", text: "Henüz gönderi yok." }));
+  box.appendChild(card);
+  return box;
+}
+
+var GUNLER = ["Pazar", "Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi"];
+function viewZaman(d) {
+  var box = h("div"), posts = d.media;
+  function group(keyFn, labelFn) {
+    var g = {};
+    posts.forEach(function (m) {
+      var k = keyFn(new Date(m.timestamp));
+      if (!g[k]) g[k] = { k: k, n: 0, sum: 0 };
+      g[k].n++; g[k].sum += (m.views != null ? m.views : m.eng);
+    });
+    return Object.keys(g).map(function (k) { return { label: labelFn(g[k].k), n: g[k].n, avg: g[k].sum / g[k].n }; })
+      .sort(function (a, b) { return b.avg - a.avg; });
+  }
+  function section(title, rows) {
+    box.appendChild(h("h2", { text: title }));
+    var card = h("div", { class: "card" });
+    var top = rows.length ? rows[0].avg : 0;
+    rows.forEach(function (r) {
+      card.appendChild(h("div", { style: "margin-bottom:12px" }, [
+        h("div", { class: "row", style: "justify-content:space-between" }, [
+          h("span", { text: r.label }), h("span", { class: "small mut", text: "ort. " + num(r.avg) + " · " + r.n + " gönderi" })
+        ]),
+        h("div", { class: "bar" }, [h("i", { style: "width:" + (top ? Math.max(2, 100 * r.avg / top) : 0).toFixed(1) + "%" })])
+      ]));
+    });
+    if (!rows.length) card.appendChild(h("p", { class: "mut", text: "Henüz veri yok." }));
+    box.appendChild(card);
+  }
+  section("Güne göre", group(function (t) { return t.getDay(); }, function (k) { return GUNLER[k]; }));
+  section("Saat aralığına göre", group(function (t) { return Math.floor(t.getHours() / 3) * 3; }, function (k) {
+    k = Number(k); return ("0" + k).slice(-2) + ":00 – " + ("0" + (k + 3)).slice(-2) + ":00";
+  }));
+  box.appendChild(h("p", { class: "mut small", style: "margin-top:12px", text: "Kendi son " + posts.length + " gönderinin paylaşım zamanına göre ortalama görüntülenmedir (telefonunun saatine göre). Az gönderili satırlar yanıltıcı olabilir." }));
+  return box;
+}
+
+function viewAyarlar(d) {
+  var at = store("ip_token_at");
+  return h("div", null, [
+    h("h2", { text: "Bağlantı" }),
+    h("div", { class: "card" }, [
+      h("p", { text: "Bağlı hesap: @" + ((d && d.me && d.me.username) || "–") }),
+      h("p", { class: "mut small", text: "Erişim anahtarı yalnızca bu telefonda saklanır ve 60 gün geçerlidir. Uygulamayı açtıkça kendiliğinden yenilenir" + (at ? " (son yenileme: " + dateStr(at) + ")." : ".") + " 60 günden uzun süre hiç açmazsan yeniden anahtar alman gerekir." }),
+      h("button", { class: "btn ghost", text: "Bağlantıyı kes ve verileri sil", onclick: function () {
+        if (this.dataset.sure !== "1") { this.dataset.sure = "1"; this.textContent = "Emin misin? Silmek için tekrar dokun"; return; }
+        ["ip_token", "ip_token_at", "ip_cache", "ip_hist"].forEach(function (k) { store(k, null); });
+        state.data = null; state.error = ""; render();
+      } })
+    ]),
+    h("h2", { text: "Ana ekrana ekle" }),
+    h("div", { class: "card small mut" }, [
+      h("p", { text: "iPhone: Safari'de Paylaş simgesi → Ana Ekrana Ekle." }),
+      h("p", { style: "margin:0", text: "Android: Chrome menüsü (⋮) → Ana ekrana ekle." })
+    ])
+  ]);
+}
+
+function viewKurulum() {
+  var ta = h("textarea", { placeholder: "Erişim anahtarını (token) buraya yapıştır", autocapitalize: "off", autocomplete: "off", spellcheck: "false" });
+  var btn = h("button", { class: "btn", text: "Bağlan", onclick: function () {
+    var v = ta.value.replace(/\s+/g, "");
+    if (v.length < 20) { state.error = "Anahtar eksik görünüyor."; render(); return; }
+    store("ip_token", v); store("ip_token_at", Date.now());
+    if (store("ip_token") !== v) { state.error = "Bu tarayıcı veri saklamaya izin vermiyor (gizli sekme olabilir). Normal sekmede aç."; render(); return; }
+    state.error = ""; refresh();
+  } });
+  return h("div", null, [
+    h("h1", { text: "Insta Panel", style: "margin:18px 2px 4px;font-size:26px" }),
+    h("p", { class: "mut", style: "margin-left:2px", text: "Instagram istatistiklerin, tamamen telefonunda." }),
+    state.error ? h("div", { class: "msg", text: state.error }) : null,
+    h("h2", { text: "Bir kereliğine kurulum" }),
+    h("div", { class: "card" }, [
+      h("ol", null, [
+        h("li", { text: "Instagram hesabın profesyonel (içerik üretici ya da işletme) olmalı." }),
+        h("li", null, [h("a", { href: "https://developers.facebook.com/apps/", target: "_blank", rel: "noopener noreferrer", text: "developers.facebook.com/apps" }), " adresinde bir uygulama oluştur ve Instagram ürününü ekle."]),
+        h("li", { text: "“Instagram girişi ile API kurulumu” bölümünde hesabını ekle, istatistik (insights) iznini ver ve “Token oluştur”a dokun." }),
+        h("li", { text: "Çıkan uzun anahtarı kopyalayıp aşağıya yapıştır." })
+      ]),
+      ta, h("div", { style: "height:10px" }), btn,
+      h("p", { class: "mut small", style: "margin:10px 0 0", text: "Anahtar yalnızca bu telefonda saklanır ve sadece Instagram'a gönderilir." })
+    ])
+  ]);
+}
+
+function render() {
+  app.textContent = "";
+  var hasToken = !!store("ip_token");
+  nav.classList.toggle("hide", !hasToken);
+  if (!hasToken) { app.appendChild(viewKurulum()); return; }
+  Array.prototype.forEach.call(nav.children, function (b) { b.classList.toggle("on", b.dataset.v === state.view); });
+  var d = state.data;
+  app.appendChild(h("div", { class: "row", style: "margin:4px 2px 12px" }, [
+    h("div", { class: "grow mut small", text: state.loading ? "Güncelleniyor…" : d ? "Güncellendi: " + new Date(d.at).toLocaleString("tr-TR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "" }),
+    h("button", { class: "chip", text: "Yenile", disabled: state.loading, onclick: refresh })
+  ]));
+  if (state.error) app.appendChild(h("div", { class: "msg", text: state.error }));
+  if (state.view === "ayarlar") { app.appendChild(viewAyarlar(d)); return; }
+  if (!d) {
+    if (state.loading) { app.appendChild(h("div", { class: "spin" })); app.appendChild(h("p", { class: "mut", style: "text-align:center", text: "Veriler Instagram'dan alınıyor…" })); }
+    return;
+  }
+  app.appendChild(state.view === "gonderiler" ? viewGonderiler(d) : state.view === "zaman" ? viewZaman(d) : viewOzet(d));
+}
+
+function refresh() {
+  if (state.loading) return;
+  state.loading = true; state.error = ""; render();
+  loadAll().then(function (d) { state.data = d; }).catch(function (e) {
+    if (e.code === 190) {
+      store("ip_token", null);
+      state.data = null;
+      state.error = "Erişim anahtarı geçersiz ya da süresi dolmuş. Yeni bir anahtar alıp yapıştır.";
+    } else if (e instanceof TypeError) {
+      state.error = "Instagram'a bağlanılamadı. İnternet bağlantını kontrol et. Sayfayı dosya olarak açtıysan bir web adresinden açman gerekir.";
+    } else {
+      state.error = "Instagram hata döndürdü: " + e.message;
+    }
+  }).then(function () { state.loading = false; render(); });
+}
+
+nav.addEventListener("click", function (e) {
+  var b = e.target.closest("button"); if (!b) return;
+  state.view = b.dataset.v; render(); window.scrollTo(0, 0);
+});
+
+state.data = store("ip_cache");
+render();
+if (store("ip_token") && (!state.data || Date.now() - state.data.at > 15 * 60000)) refresh();
+</script>
+</body>
+</html>
