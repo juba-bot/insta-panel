@@ -9,6 +9,8 @@
 <meta name="apple-mobile-web-app-title" content="Insta Panel">
 <meta name="theme-color" content="#0f1115">
 <meta name="referrer" content="no-referrer">
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="icon" type="image/png" href="icon.png">
 <title>Insta Panel</title>
 <style>
 :root{--bg:#0f1115;--card:#181b22;--line:#262a34;--text:#eef0f4;--mut:#8b92a1;--acc:#ff5c8a;--acc2:#ffb347;--ok:#4cd39a;--bad:#ff6b6b}
@@ -19,6 +21,7 @@ h1{font-size:20px;margin:0}h2{font-size:13px;letter-spacing:.06em;text-transform
 p{margin:0 0 10px}a{color:var(--acc)}
 .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px}
 .row{display:flex;align-items:center;gap:12px}
+.between{justify-content:space-between}
 .grow{flex:1;min-width:0}
 .mut{color:var(--mut)}.small{font-size:12.5px}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
@@ -30,12 +33,15 @@ button,input,textarea{font:inherit;color:inherit}
 .btn{display:block;width:100%;border:0;border-radius:12px;padding:13px;background:linear-gradient(90deg,var(--acc),var(--acc2));color:#16090d;font-weight:700}
 .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--text);font-weight:500}
 .btn:disabled{opacity:.5}
-textarea{width:100%;min-height:92px;background:#0b0d11;border:1px solid var(--line);border-radius:12px;padding:10px;font-size:13px;word-break:break-all}
+.btn+.btn{margin-top:8px}
+textarea,.inp{width:100%;background:#0b0d11;border:1px solid var(--line);border-radius:12px;padding:10px;font-size:13px}
+textarea{min-height:92px;word-break:break-all}
 ol{padding-left:20px;margin:6px 0 12px}li{margin-bottom:6px}
 .chips{display:flex;gap:8px;overflow-x:auto;padding:2px 0 10px;scrollbar-width:none}
 .chips::-webkit-scrollbar{display:none}
 .chip{flex:none;border:1px solid var(--line);background:transparent;border-radius:999px;padding:7px 13px;font-size:13px;color:var(--mut)}
 .chip.on{background:var(--text);color:var(--bg);border-color:var(--text);font-weight:600}
+.chip:disabled{opacity:.5}
 .post{display:flex;gap:12px;padding:12px 0;border-bottom:1px solid var(--line);text-decoration:none;color:inherit}
 .post:last-child{border-bottom:0}
 .thumb{width:64px;height:84px;border-radius:10px;object-fit:cover;background:var(--line);flex:none}
@@ -43,10 +49,12 @@ ol{padding-left:20px;margin:6px 0 12px}li{margin-bottom:6px}
 .nums{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12.5px;color:var(--mut);margin-top:4px}
 .nums b{color:var(--text);font-weight:600}
 .rank{font-size:12px;color:var(--acc2);font-weight:700}
+.live{color:var(--ok)}
 .bar{height:8px;border-radius:4px;background:var(--line);overflow:hidden;margin-top:6px}
 .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--acc),var(--acc2))}
-nav{position:fixed;left:0;right:0;bottom:0;display:flex;background:rgba(15,17,21,.94);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-top:1px solid var(--line);padding:6px 8px calc(env(safe-area-inset-bottom) + 6px)}
-nav button{flex:1;background:none;border:0;padding:9px 4px;color:var(--mut);font-size:12.5px;border-radius:10px}
+.line{margin-bottom:12px}.line:last-child{margin-bottom:0}
+nav{position:fixed;left:0;right:0;bottom:0;display:flex;background:rgba(15,17,21,.94);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-top:1px solid var(--line);padding:6px 6px calc(env(safe-area-inset-bottom) + 6px)}
+nav button{flex:1;background:none;border:0;padding:9px 2px;color:var(--mut);font-size:12px;border-radius:10px}
 nav button.on{color:var(--text);font-weight:700;background:var(--card)}
 .msg{border-radius:12px;padding:11px 13px;margin:10px 0;font-size:13.5px;background:#2a1a1f;border:1px solid #5a2a36}
 .spin{width:26px;height:26px;border:3px solid var(--line);border-top-color:var(--acc);border-radius:50%;animation:s 0.8s linear infinite;margin:60px auto 14px}
@@ -59,18 +67,19 @@ svg{display:block;width:100%;height:auto}
 <div id="app"></div>
 <nav id="nav" class="hide">
   <button data-v="ozet">Özet</button>
-  <button data-v="gonderiler">Gönderiler</button>
-  <button data-v="zaman">En iyi zaman</button>
+  <button data-v="gonderiler">İçerik</button>
+  <button data-v="analiz">Analiz</button>
+  <button data-v="kitle">Kitle</button>
   <button data-v="ayarlar">Ayarlar</button>
 </nav>
 <script>
 "use strict";
 var API_IG = "https://graph.instagram.com";   // "IG..." ile başlayan anahtarlar (Instagram girişi)
 var API_FB = "https://graph.facebook.com";    // "EAA..." ile başlayan anahtarlar (Unified login)
-var DAY = 86400000;
+var DAY = 86400000, CACHE_V = 2;
 var app = document.getElementById("app");
 var nav = document.getElementById("nav");
-var state = { view: "ozet", sort: "views", data: null, loading: false, error: "", needId: false };
+var state = { view: "ozet", sort: "views", tab: "posts", period: 7, data: null, loading: false, error: "", needId: false, adding: false, showToken: false };
 
 /* ---------- küçük yardımcılar ---------- */
 function store(k, v) {
@@ -98,17 +107,53 @@ function num(n) {
   if (n >= 1e4) return (n / 1e3).toFixed(1).replace(".0", "") + " B";
   return Math.round(n).toLocaleString("tr-TR");
 }
+function signed(n) { return (n > 0 ? "+" : "") + Math.round(n).toLocaleString("tr-TR"); }
 function pct(n) { return n == null || !isFinite(n) ? "–" : "%" + (n * 100).toFixed(1).replace(".", ","); }
 function dateStr(d) { return new Date(d).toLocaleDateString("tr-TR", { day: "numeric", month: "short" }); }
+function timeStr(d) { return new Date(d).toLocaleString("tr-TR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }); }
 function dayKey(t) { var d = new Date(t); return d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate(); }
+function ts(m) { return new Date(m.timestamp).getTime(); }
+function sum(a, f) { return a.reduce(function (s, x) { return s + (f(x) || 0); }, 0); }
+function avg(a, f) { var b = a.filter(function (x) { return f(x) != null; }); return b.length ? sum(b, f) / b.length : null; }
+function kindOf(m) { return m.media_product_type === "REELS" ? "Reels" : m.media_type === "CAROUSEL_ALBUM" ? "Kaydırmalı" : m.media_type === "VIDEO" ? "Video" : "Fotoğraf"; }
+
+/* ---------- hesaplar (yalnızca bu telefonda saklanır) ---------- */
+function accounts() { return store("ip_accounts") || []; }
+function saveAccounts(a) { store("ip_accounts", a); }
+function cur() { var a = accounts(); return a[store("ip_active") || 0] || a[0] || null; }
+function setCur(patch) {
+  var a = accounts(), i = Math.min(store("ip_active") || 0, a.length - 1);
+  if (i < 0) return;
+  Object.keys(patch).forEach(function (k) { a[i][k] = patch[k]; });
+  saveAccounts(a);
+}
+function akey(name) { var c = cur(); return "ip_" + name + "_" + (c ? c.uid : "x"); }
+function removeAccount(uid) {
+  var a = accounts().filter(function (x) { return x.uid !== uid; });
+  ["cache", "hist", "stories"].forEach(function (n) { store("ip_" + n + "_" + uid, null); });
+  saveAccounts(a); store("ip_active", 0);
+}
+// Önceki sürümden geçiş: giriş ve takipçi geçmişi korunur
+(function migrate() {
+  var old = store("ip_token");
+  if (!old || accounts().length) return;
+  var acc = { uid: "a1", token: old, igid: store("ip_igid") || null, at: store("ip_token_at") || Date.now(), username: "" };
+  var c = store("ip_cache"); if (c && c.me) acc.username = c.me.username || "";
+  saveAccounts([acc]);
+  if (!accounts().length) return; // yazılamadıysa eskiye dokunma
+  var hist = store("ip_hist"); if (hist) store("ip_hist_a1", hist);
+  store("ip_active", 0);
+  ["ip_token", "ip_token_at", "ip_igid", "ip_cache", "ip_hist"].forEach(function (k) { store(k, null); });
+})();
+function loadCache() { var d = store(akey("cache")); return d && d.v === CACHE_V ? d : null; }
 
 /* ---------- Instagram API ---------- */
-function isIG() { return /^IG/.test(store("ip_token") || ""); }
+function isIG() { var c = cur(); return /^IG/.test((c && c.token) || ""); }
 function api(path, params) {
-  var API = isIG() ? API_IG : API_FB;
+  var c = cur();
   var q = Object.keys(params || {}).map(function (k) { return k + "=" + encodeURIComponent(params[k]); });
-  q.push("access_token=" + encodeURIComponent(store("ip_token")));
-  return fetch(API + path + "?" + q.join("&"), { referrerPolicy: "no-referrer" }).then(function (r) {
+  q.push("access_token=" + encodeURIComponent(c ? c.token : ""));
+  return fetch((isIG() ? API_IG : API_FB) + path + "?" + q.join("&"), { referrerPolicy: "no-referrer" }).then(function (r) {
     return r.json().then(function (j) {
       if (j && j.error) { var e = new Error(j.error.message || "API hatası"); e.code = j.error.code; throw e; }
       return j;
@@ -118,19 +163,18 @@ function api(path, params) {
 function soft(p) { return p.catch(function () { return null; }); }
 
 function refreshTokenIfNeeded() {
-  var at = store("ip_token_at") || 0;
-  if (!isIG()) return Promise.resolve(); // Unified login anahtarı yenilenmez
-  if (Date.now() - at < 7 * DAY) return Promise.resolve();
+  var c = cur();
+  if (!isIG() || Date.now() - (c.at || 0) < 7 * DAY) return Promise.resolve(); // Unified login anahtarı yenilenmez
   return soft(api("/refresh_access_token", { grant_type: "ig_refresh_token" }).then(function (j) {
-    if (j.access_token) { store("ip_token", j.access_token); store("ip_token_at", Date.now()); }
+    if (j.access_token) setCur({ token: j.access_token, at: Date.now() });
   }));
 }
 
-// Hesabın API yolunu bulur: Instagram girişinde "/me", Unified login'de "/<hesap kimliği>"
+// Hesabın API yolu: Instagram girişinde "/me", Unified login'de "/<hesap kimliği>"
 function findRoot() {
   if (isIG()) return Promise.resolve("/me");
-  var saved = store("ip_igid");
-  if (saved) return Promise.resolve("/" + saved);
+  var c = cur();
+  if (c.igid) return Promise.resolve("/" + c.igid);
   function pick(j) {
     var a = (j && j.data) || [];
     for (var i = 0; i < a.length; i++) {
@@ -145,19 +189,19 @@ function findRoot() {
     return id || soft(api("/me/accounts", { fields: "instagram_business_account{id,username}" })).then(pick);
   }).then(function (id) {
     if (!id) { var e = new Error("Hesap bulunamadı"); e.code = "NOACCOUNT"; throw e; }
-    store("ip_igid", id);
+    setCur({ igid: id });
     return "/" + id;
   });
 }
 
-function mediaInsights(m) {
-  function read(j) {
-    var o = {};
-    (j.data || []).forEach(function (d) { o[d.name] = d.values && d.values[0] ? d.values[0].value : (d.total_value ? d.total_value.value : null); });
-    return o;
-  }
-  return api("/" + m.id + "/insights", { metric: "reach,views,saved,shares,total_interactions" }).then(read)
-    .catch(function () { return api("/" + m.id + "/insights", { metric: "reach,saved" }).then(read); })
+function readInsights(j) {
+  var o = {};
+  (j.data || []).forEach(function (d) { o[d.name] = d.values && d.values[0] ? d.values[0].value : (d.total_value ? d.total_value.value : null); });
+  return o;
+}
+function insightsOf(id, full, basic) {
+  return api("/" + id + "/insights", { metric: full }).then(readInsights)
+    .catch(function () { return api("/" + id + "/insights", { metric: basic }).then(readInsights); })
     .catch(function () { return {}; });
 }
 function pool(items, size, fn) {
@@ -171,22 +215,36 @@ function pool(items, size, fn) {
   for (var k = 0; k < size; k++) runners.push(next());
   return Promise.all(runners).then(function () { return out; });
 }
+function demoCall(root, breakdown) {
+  var p = { metric: "follower_demographics", period: "lifetime", metric_type: "total_value", breakdown: breakdown };
+  function read(j) {
+    var t = j && j.data && j.data[0] && j.data[0].total_value;
+    var r = t && t.breakdowns && t.breakdowns[0] && t.breakdowns[0].results;
+    return (r || []).map(function (x) { return { k: (x.dimension_values || []).join(" "), v: x.value || 0 }; })
+      .sort(function (a, b) { return b.v - a.v; });
+  }
+  return api(root + "/insights", p).then(read).catch(function () {
+    p.timeframe = "last_30_days";
+    return api(root + "/insights", p).then(read);
+  }).catch(function () { return null; });
+}
 
 function loadAll() {
   var until = Math.floor(Date.now() / 1000), since = until - 28 * 86400;
-  var out = {}, root = "/me";
+  var out = { v: CACHE_V }, root = "/me";
+  function tot(metric) { return soft(api(root + "/insights", { metric: metric, period: "day", metric_type: "total_value", since: since, until: until })); }
   return refreshTokenIfNeeded().then(findRoot).then(function (r) {
     root = r;
     return api(root, { fields: "username,name,profile_picture_url,followers_count,follows_count,media_count" });
   }).then(function (me) {
     out.me = me;
+    setCur({ username: me.username || "", fresh: false });
     return Promise.all([
-      api(root + "/media", { fields: "id,caption,media_type,media_product_type,thumbnail_url,media_url,permalink,timestamp,like_count,comments_count", limit: 30 }),
+      api(root + "/media", { fields: "id,caption,media_type,media_product_type,thumbnail_url,media_url,permalink,timestamp,like_count,comments_count", limit: 50 }),
       soft(api(root + "/insights", { metric: "reach", period: "day", since: since, until: until })),
-      soft(api(root + "/insights", { metric: "reach", period: "day", metric_type: "total_value", since: since, until: until })),
-      soft(api(root + "/insights", { metric: "views", period: "day", metric_type: "total_value", since: since, until: until })),
-      soft(api(root + "/insights", { metric: "accounts_engaged", period: "day", metric_type: "total_value", since: since, until: until })),
-      soft(api(root + "/insights", { metric: "total_interactions", period: "day", metric_type: "total_value", since: since, until: until }))
+      tot("reach"), tot("views"), tot("accounts_engaged"), tot("total_interactions"),
+      soft(api(root + "/stories", { fields: "id,media_type,thumbnail_url,media_url,permalink,timestamp" })),
+      demoCall(root, "country"), demoCall(root, "city"), demoCall(root, "age"), demoCall(root, "gender")
     ]);
   }).then(function (r) {
     out.media = (r[0].data || []);
@@ -194,33 +252,55 @@ function loadAll() {
     out.reachSeries = (series || []).map(function (v) { return { t: v.end_time, v: v.value || 0 }; });
     function total(j) { return j && j.data && j.data[0] && j.data[0].total_value ? j.data[0].total_value.value : null; }
     out.totals = { reach: total(r[2]), views: total(r[3]), engaged: total(r[4]), interactions: total(r[5]) };
-    return pool(out.media, 5, mediaInsights);
-  }).then(function (ins) {
+    out.liveStories = (r[6] && r[6].data) || [];
+    out.demo = { country: r[7], city: r[8], age: r[9], gender: r[10] };
+    return Promise.all([
+      pool(out.media, 6, function (m) { return insightsOf(m.id, "reach,views,saved,shares,total_interactions", "reach,saved"); }),
+      pool(out.liveStories, 4, function (s) { return insightsOf(s.id, "reach,views,replies,shares,total_interactions", "reach,replies"); })
+    ]);
+  }).then(function (res) {
     out.media.forEach(function (m, i) {
-      var x = ins[i] || {};
+      var x = res[0][i] || {};
       m.reach = x.reach; m.views = x.views; m.saved = x.saved; m.shares = x.shares;
       m.likes = m.like_count || 0; m.comments = m.comments_count || 0;
       m.eng = x.total_interactions != null ? x.total_interactions : m.likes + m.comments + (x.saved || 0) + (x.shares || 0);
       m.rate = m.reach ? m.eng / m.reach : null;
     });
     out.at = Date.now();
-    // takipçi geçmişi: her gün için bir kayıt (yalnızca bu telefonda tutulur)
-    var hist = store("ip_hist") || [];
+
+    // hikâye arşivi: hikâyeler 24 saatte silindiği için görülenler burada saklanır
+    var arch = store(akey("stories")) || [], liveIds = {};
+    out.liveStories.forEach(function (s, i) {
+      var x = res[1][i] || {};
+      liveIds[s.id] = true;
+      var rec = { id: s.id, timestamp: s.timestamp, permalink: s.permalink, video: s.media_type === "VIDEO",
+        img: s.thumbnail_url || (s.media_type !== "VIDEO" ? s.media_url : null),
+        reach: x.reach, views: x.views, replies: x.replies, shares: x.shares, eng: x.total_interactions, seen: out.at };
+      arch = arch.filter(function (a) { return a.id !== s.id; });
+      arch.push(rec);
+    });
+    arch.sort(function (a, b) { return ts(b) - ts(a); });
+    arch = arch.slice(0, 120);
+    store(akey("stories"), arch);
+    out.liveIds = liveIds;
+    delete out.liveStories;
+
+    // takipçi geçmişi: her gün için bir kayıt
+    var hist = store(akey("hist")) || [];
     var key = dayKey(out.at);
     hist = hist.filter(function (x) { return x.k !== key; });
     hist.push({ k: key, t: out.at, f: out.me.followers_count });
     if (hist.length > 400) hist = hist.slice(-400);
-    store("ip_hist", hist);
-    out.hist = hist;
-    store("ip_cache", out);
+    store(akey("hist"), hist);
+    store(akey("cache"), out);
     return out;
   });
 }
 
-/* ---------- grafik ---------- */
+/* ---------- grafik ve ortak parçalar ---------- */
 function lineChart(points, color) {
   var W = 320, H = 110, P = 6;
-  if (!points || points.length < 2) return h("p", { class: "mut small", text: "Grafik için henüz yeterli veri yok." });
+  if (!points || points.length < 2) return h("p", { class: "mut small", style: "margin:0", text: "Grafik için henüz yeterli veri yok." });
   var vals = points.map(function (p) { return p.v; });
   var min = Math.min.apply(null, vals), max = Math.max.apply(null, vals);
   if (max === min) { max += 1; min -= 1; }
@@ -238,18 +318,27 @@ function lineChart(points, color) {
   pl.setAttribute("points", line); pl.setAttribute("fill", "none"); pl.setAttribute("stroke", color);
   pl.setAttribute("stroke-width", "2.2"); pl.setAttribute("stroke-linejoin", "round"); pl.setAttribute("stroke-linecap", "round");
   svg.appendChild(area); svg.appendChild(pl);
-  var wrap = h("div", null, [svg]);
-  wrap.appendChild(h("div", { class: "row small mut", style: "justify-content:space-between;margin-top:4px" }, [
+  return h("div", null, [svg, h("div", { class: "row between small mut", style: "margin-top:4px" }, [
     h("span", { text: dateStr(points[0].t) }),
     h("span", { text: "en düşük " + num(Math.min.apply(null, vals)) + " · en yüksek " + num(Math.max.apply(null, vals)) }),
     h("span", { text: dateStr(points[points.length - 1].t) })
-  ]));
-  return wrap;
+  ])]);
 }
-
-/* ---------- ekranlar ---------- */
-function stat(label, value, extra) {
-  return h("div", { class: "card stat" }, [h("b", { text: value }), h("span", { text: label }), extra]);
+function stat(label, value, extra) { return h("div", { class: "card stat" }, [h("b", { text: value }), h("span", { text: label }), extra]); }
+function barLine(label, right, ratio) {
+  return h("div", { class: "line" }, [
+    h("div", { class: "row between" }, [h("span", { text: label }), h("span", { class: "small mut", text: right })]),
+    h("div", { class: "bar" }, [h("i", { style: "width:" + Math.max(2, Math.min(100, 100 * ratio)).toFixed(1) + "%" })])
+  ]);
+}
+function chipRow(items, current, onPick) {
+  return h("div", { class: "chips" }, items.map(function (s) {
+    return h("button", { class: "chip" + (current === s[0] ? " on" : ""), text: s[1], onclick: function () { onPick(s[0]); } });
+  }));
+}
+function thumbEl(src) {
+  if (!src) return h("div", { class: "thumb" });
+  return h("img", { class: "thumb", src: src, alt: "", loading: "lazy", referrerpolicy: "no-referrer", onerror: function () { this.removeAttribute("src"); } });
 }
 function followerDelta(hist, days) {
   if (!hist || hist.length < 2) return null;
@@ -259,8 +348,48 @@ function followerDelta(hist, days) {
   return { d: last.f - base.f, days: Math.max(1, Math.round((last.t - base.t) / DAY)) };
 }
 
+/* ---------- Özet ---------- */
+function periodCard(d, hist) {
+  var days = state.period, a = d.at - days * DAY, b = d.at - 2 * days * DAY;
+  var now = d.media.filter(function (m) { return ts(m) >= a; });
+  var prev = d.media.filter(function (m) { return ts(m) < a && ts(m) >= b; });
+  var oldest = d.media.length ? Math.min.apply(null, d.media.map(ts)) : d.at;
+  var prevKnown = d.media.length < 50 || oldest <= b;
+  var v = sum(now, function (m) { return m.views; }), pv = sum(prev, function (m) { return m.views; });
+  var cmp = null;
+  if (prevKnown && prev.length && pv > 0) {
+    var ch = (v - pv) / pv;
+    cmp = h("div", { class: "delta " + (ch >= 0 ? "up" : "down"), text: (ch >= 0 ? "+" : "−") + pct(Math.abs(ch)) + " · önceki " + days + " güne göre" });
+  }
+  var fd = followerDelta(hist, days);
+  var best = now.slice().sort(function (x, y) { return (y.views != null ? y.views : y.eng) - (x.views != null ? x.views : x.eng); })[0];
+  var box = h("div");
+  box.appendChild(h("div", { class: "grid" }, [
+    stat("Paylaşılan gönderi", num(now.length), prevKnown ? h("div", { class: "small mut", text: "önceki dönem: " + prev.length }) : null),
+    stat("Bu gönderilerin görüntülenmesi", num(now.length ? v : null), cmp),
+    stat("Ort. etkileşim oranı", pct(avg(now, function (m) { return m.rate; }))),
+    stat("Takipçi değişimi", fd ? signed(fd.d) : "–", h("div", { class: "small mut", text: fd ? "son " + fd.days + " gün" : "kayıt biriktikçe görünür" }))
+  ]));
+  if (best) {
+    box.appendChild(h("a", { class: "card post", style: "margin-top:10px;padding:12px 14px", href: best.permalink || "#", target: "_blank", rel: "noopener noreferrer" }, [
+      thumbEl(best.thumbnail_url || (best.media_type !== "VIDEO" ? best.media_url : null)),
+      h("div", { class: "grow" }, [
+        h("div", { class: "rank", text: "Dönemin en iyisi · " + kindOf(best) + " · " + dateStr(best.timestamp) }),
+        h("div", { class: "cap", text: (best.caption || "(açıklama yok)").split("\n")[0] }),
+        h("div", { class: "nums" }, [
+          h("span", null, [h("b", { text: num(best.views) }), " görüntülenme"]),
+          h("span", null, [h("b", { text: num(best.eng) }), " etkileşim"]),
+          h("span", null, [h("b", { text: pct(best.rate) }), " oran"])
+        ])
+      ])
+    ]));
+  } else {
+    box.appendChild(h("p", { class: "mut small", style: "margin-top:8px", text: "Bu dönemde paylaşılmış gönderi yok." }));
+  }
+  return box;
+}
 function viewOzet(d) {
-  var me = d.me, box = h("div");
+  var me = d.me, box = h("div"), hist = store(akey("hist")) || [];
   box.appendChild(h("div", { class: "card row" }, [
     me.profile_picture_url ? h("img", { class: "avatar", src: me.profile_picture_url, alt: "", referrerpolicy: "no-referrer" }) : h("div", { class: "avatar" }),
     h("div", { class: "grow" }, [
@@ -268,20 +397,20 @@ function viewOzet(d) {
       h("div", { class: "mut small", text: (me.name ? me.name + " · " : "") + num(me.media_count) + " gönderi" })
     ])
   ]));
-  var fd = followerDelta(d.hist, 7), deltaEl = null;
-  if (fd) deltaEl = h("div", { class: "delta " + (fd.d >= 0 ? "up" : "down"), text: (fd.d >= 0 ? "+" : "") + num(fd.d).replace("–", "0") + " · son " + fd.days + " gün" });
-  var posts = d.media, withReach = posts.filter(function (m) { return m.rate != null; });
-  var avgRate = withReach.length ? withReach.reduce(function (s, m) { return s + m.rate; }, 0) / withReach.length : null;
-
+  var withReach = d.media.filter(function (m) { return m.rate != null; });
   box.appendChild(h("h2", { text: "Hesap" }));
   box.appendChild(h("div", { class: "grid" }, [
-    stat("Takipçi", num(me.followers_count), deltaEl),
+    stat("Takipçi", num(me.followers_count)),
     stat("Takip edilen", num(me.follows_count)),
-    stat("Ort. etkileşim oranı", pct(avgRate), h("div", { class: "small mut", text: "son " + withReach.length + " gönderi, erişime göre" })),
-    stat("Gönderi başı ort. etkileşim", num(posts.length ? posts.reduce(function (s, m) { return s + m.eng; }, 0) / posts.length : null))
+    stat("Ort. etkileşim oranı", pct(avg(withReach, function (m) { return m.rate; })), h("div", { class: "small mut", text: "son " + withReach.length + " gönderi, erişime göre" })),
+    stat("Gönderi başı ort. etkileşim", num(avg(d.media, function (m) { return m.eng; })))
   ]));
 
-  box.appendChild(h("h2", { text: "Son 28 gün" }));
+  box.appendChild(h("h2", { text: "Dönem özeti" }));
+  box.appendChild(chipRow([[7, "Son 7 gün"], [30, "Son 30 gün"]], state.period, function (p) { state.period = p; render(); }));
+  box.appendChild(periodCard(d, hist));
+
+  box.appendChild(h("h2", { text: "Hesap geneli · son 28 gün" }));
   var t = d.totals || {};
   box.appendChild(h("div", { class: "grid" }, [
     stat("Görüntülenme", num(t.views)), stat("Erişilen hesap", num(t.reach)),
@@ -293,7 +422,7 @@ function viewOzet(d) {
   box.appendChild(h("div", { class: "card" }, [lineChart(d.reachSeries, "#ff5c8a")]));
 
   box.appendChild(h("h2", { text: "Takipçi geçmişi" }));
-  var fh = (d.hist || []).map(function (x) { return { t: x.t, v: x.f }; });
+  var fh = hist.map(function (x) { return { t: x.t, v: x.f }; });
   box.appendChild(h("div", { class: "card" }, [
     lineChart(fh, "#4cd39a"),
     h("p", { class: "mut small", style: "margin:8px 0 0", text: "Uygulamayı açtığın her gün bir kayıt eklenir (" + fh.length + " kayıt). Düzenli açtıkça grafik dolar." })
@@ -301,27 +430,23 @@ function viewOzet(d) {
   return box;
 }
 
+/* ---------- İçerik: gönderiler ve hikâyeler ---------- */
 var SORTS = [["views", "Görüntülenme"], ["reach", "Erişim"], ["eng", "Etkileşim"], ["rate", "Etkileşim oranı"], ["saved", "Kaydetme"], ["shares", "Paylaşım"], ["time", "En yeni"]];
-function viewGonderiler(d) {
+function viewPosts(d) {
   var box = h("div");
-  box.appendChild(h("h2", { text: "Son " + d.media.length + " gönderi" }));
-  box.appendChild(h("div", { class: "chips" }, SORTS.map(function (s) {
-    return h("button", { class: "chip" + (state.sort === s[0] ? " on" : ""), text: s[1], onclick: function () { state.sort = s[0]; render(); } });
-  })));
+  box.appendChild(chipRow(SORTS, state.sort, function (s) { state.sort = s; render(); }));
   var key = state.sort;
   var list = d.media.slice().sort(function (a, b) {
-    if (key === "time") return new Date(b.timestamp) - new Date(a.timestamp);
+    if (key === "time") return ts(b) - ts(a);
     return (b[key] == null ? -1 : b[key]) - (a[key] == null ? -1 : a[key]);
   });
-  var top = key === "time" ? 0 : Math.max.apply(null, list.map(function (m) { return m[key] || 0; }));
+  var top = key === "time" ? 0 : Math.max.apply(null, list.map(function (m) { return m[key] || 0; }).concat([0]));
   var card = h("div", { class: "card", style: "padding:2px 14px" });
   list.forEach(function (m, i) {
-    var img = m.thumbnail_url || (m.media_type !== "VIDEO" ? m.media_url : null);
-    var kind = m.media_product_type === "REELS" ? "Reels" : m.media_type === "CAROUSEL_ALBUM" ? "Kaydırmalı" : m.media_type === "VIDEO" ? "Video" : "Fotoğraf";
     card.appendChild(h("a", { class: "post", href: m.permalink || "#", target: "_blank", rel: "noopener noreferrer" }, [
-      img ? h("img", { class: "thumb", src: img, alt: "", loading: "lazy", referrerpolicy: "no-referrer" }) : h("div", { class: "thumb" }),
+      thumbEl(m.thumbnail_url || (m.media_type !== "VIDEO" ? m.media_url : null)),
       h("div", { class: "grow" }, [
-        h("div", { class: "rank", text: "#" + (i + 1) + " · " + kind + " · " + dateStr(m.timestamp) }),
+        h("div", { class: "rank", text: "#" + (i + 1) + " · " + kindOf(m) + " · " + dateStr(m.timestamp) }),
         h("div", { class: "cap", text: (m.caption || "(açıklama yok)").split("\n")[0] }),
         h("div", { class: "nums" }, [
           h("span", null, [h("b", { text: num(m.views) }), " görüntülenme"]),
@@ -336,136 +461,282 @@ function viewGonderiler(d) {
       ])
     ]));
   });
-  if (!list.length) card.appendChild(h("p", { class: "mut", style: "padding:14px 0", text: "Henüz gönderi yok." }));
+  if (!list.length) card.appendChild(h("p", { class: "mut", style: "padding:14px 0;margin:0", text: "Henüz gönderi yok." }));
   box.appendChild(card);
   return box;
 }
+function viewStories(d) {
+  var box = h("div"), arch = store(akey("stories")) || [], live = d.liveIds || {};
+  var nLive = arch.filter(function (s) { return live[s.id]; }).length;
+  box.appendChild(h("div", { class: "grid" }, [
+    stat("Şu an yayında", num(nLive)),
+    stat("Kayıtlı hikâye", num(arch.length)),
+    stat("Ort. görüntülenme", num(avg(arch, function (s) { return s.views; }))),
+    stat("Ort. erişim", num(avg(arch, function (s) { return s.reach; })))
+  ]));
+  var card = h("div", { class: "card", style: "padding:2px 14px;margin-top:10px" });
+  arch.forEach(function (s) {
+    var on = !!live[s.id];
+    card.appendChild(h(on && s.permalink ? "a" : "div", { class: "post", href: on ? s.permalink : null, target: "_blank", rel: "noopener noreferrer" }, [
+      thumbEl(on ? s.img : null),
+      h("div", { class: "grow" }, [
+        h("div", { class: "rank" + (on ? " live" : ""), text: (on ? "Yayında · " : "") + (s.video ? "Video" : "Fotoğraf") + " · " + timeStr(s.timestamp) }),
+        h("div", { class: "nums" }, [
+          h("span", null, [h("b", { text: num(s.views) }), " görüntülenme"]),
+          h("span", null, [h("b", { text: num(s.reach) }), " erişim"]),
+          h("span", null, [h("b", { text: num(s.replies) }), " yanıt"]),
+          h("span", null, [h("b", { text: num(s.shares) }), " paylaşım"]),
+          h("span", null, [h("b", { text: num(s.eng) }), " etkileşim"])
+        ]),
+        on ? null : h("div", { class: "small mut", style: "margin-top:4px", text: "Son ölçüm: " + timeStr(s.seen) })
+      ])
+    ]));
+  });
+  if (!arch.length) card.appendChild(h("p", { class: "mut", style: "padding:14px 0;margin:0", text: "Henüz kayıtlı hikâye yok." }));
+  box.appendChild(card);
+  box.appendChild(h("p", { class: "mut small", style: "margin-top:12px", text: "Instagram hikâye istatistiklerini yalnızca hikâye yayındayken (24 saat) verir. Panel, açtığın sırada yayında olan hikâyeleri kaydeder; son rakamlar için hikâye bitmeden bir kez daha aç." }));
+  return box;
+}
+function viewIcerik(d) {
+  var box = h("div");
+  box.appendChild(chipRow([["posts", "Gönderiler (" + d.media.length + ")"], ["stories", "Hikâyeler"]], state.tab, function (t) { state.tab = t; render(); }));
+  box.appendChild(state.tab === "stories" ? viewStories(d) : viewPosts(d));
+  return box;
+}
 
+/* ---------- Analiz: içerik türleri ve en iyi zaman ---------- */
 var GUNLER = ["Pazar", "Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi"];
-function viewZaman(d) {
+function viewAnaliz(d) {
   var box = h("div"), posts = d.media;
+  function score(m) { return m.views != null ? m.views : m.eng; }
+
+  box.appendChild(h("h2", { text: "İçerik türü karşılaştırması" }));
+  var g = {};
+  posts.forEach(function (m) { var k = kindOf(m); (g[k] = g[k] || []).push(m); });
+  var types = Object.keys(g).map(function (k) {
+    return { k: k, n: g[k].length, views: avg(g[k], function (m) { return m.views; }), reach: avg(g[k], function (m) { return m.reach; }),
+      eng: avg(g[k], function (m) { return m.eng; }), rate: avg(g[k], function (m) { return m.rate; }), s: avg(g[k], score) || 0 };
+  }).sort(function (a, b) { return b.s - a.s; });
+  var card = h("div", { class: "card" }), topS = types.length ? types[0].s : 0;
+  types.forEach(function (t) {
+    card.appendChild(h("div", { class: "line" }, [
+      h("div", { class: "row between" }, [h("b", { text: t.k }), h("span", { class: "small mut", text: t.n + " gönderi" })]),
+      h("div", { class: "bar" }, [h("i", { style: "width:" + (topS ? Math.max(2, 100 * t.s / topS) : 0).toFixed(1) + "%" })]),
+      h("div", { class: "nums" }, [
+        h("span", null, [h("b", { text: num(t.views) }), " ort. görüntülenme"]),
+        h("span", null, [h("b", { text: num(t.reach) }), " ort. erişim"]),
+        h("span", null, [h("b", { text: num(t.eng) }), " ort. etkileşim"]),
+        h("span", null, [h("b", { text: pct(t.rate) }), " oran"])
+      ])
+    ]));
+  });
+  if (!types.length) card.appendChild(h("p", { class: "mut", style: "margin:0", text: "Henüz veri yok." }));
+  box.appendChild(card);
+
   function group(keyFn, labelFn) {
-    var g = {};
+    var gg = {};
     posts.forEach(function (m) {
       var k = keyFn(new Date(m.timestamp));
-      if (!g[k]) g[k] = { k: k, n: 0, sum: 0 };
-      g[k].n++; g[k].sum += (m.views != null ? m.views : m.eng);
+      if (!gg[k]) gg[k] = { k: k, n: 0, sum: 0 };
+      gg[k].n++; gg[k].sum += score(m) || 0;
     });
-    return Object.keys(g).map(function (k) { return { label: labelFn(g[k].k), n: g[k].n, avg: g[k].sum / g[k].n }; })
+    return Object.keys(gg).map(function (k) { return { label: labelFn(gg[k].k), n: gg[k].n, avg: gg[k].sum / gg[k].n }; })
       .sort(function (a, b) { return b.avg - a.avg; });
   }
   function section(title, rows) {
     box.appendChild(h("h2", { text: title }));
-    var card = h("div", { class: "card" });
-    var top = rows.length ? rows[0].avg : 0;
-    rows.forEach(function (r) {
-      card.appendChild(h("div", { style: "margin-bottom:12px" }, [
-        h("div", { class: "row", style: "justify-content:space-between" }, [
-          h("span", { text: r.label }), h("span", { class: "small mut", text: "ort. " + num(r.avg) + " · " + r.n + " gönderi" })
-        ]),
-        h("div", { class: "bar" }, [h("i", { style: "width:" + (top ? Math.max(2, 100 * r.avg / top) : 0).toFixed(1) + "%" })])
-      ]));
-    });
-    if (!rows.length) card.appendChild(h("p", { class: "mut", text: "Henüz veri yok." }));
-    box.appendChild(card);
+    var c = h("div", { class: "card" }), top = rows.length ? rows[0].avg : 0;
+    rows.forEach(function (r) { c.appendChild(barLine(r.label, "ort. " + num(r.avg) + " · " + r.n + " gönderi", top ? r.avg / top : 0)); });
+    if (!rows.length) c.appendChild(h("p", { class: "mut", style: "margin:0", text: "Henüz veri yok." }));
+    box.appendChild(c);
   }
-  section("Güne göre", group(function (t) { return t.getDay(); }, function (k) { return GUNLER[k]; }));
-  section("Saat aralığına göre", group(function (t) { return Math.floor(t.getHours() / 3) * 3; }, function (k) {
+  section("En iyi gün", group(function (t) { return t.getDay(); }, function (k) { return GUNLER[k]; }));
+  section("En iyi saat aralığı", group(function (t) { return Math.floor(t.getHours() / 3) * 3; }, function (k) {
     k = Number(k); return ("0" + k).slice(-2) + ":00 – " + ("0" + (k + 3)).slice(-2) + ":00";
   }));
-  box.appendChild(h("p", { class: "mut small", style: "margin-top:12px", text: "Kendi son " + posts.length + " gönderinin paylaşım zamanına göre ortalama görüntülenmedir (telefonunun saatine göre). Az gönderili satırlar yanıltıcı olabilir." }));
+  box.appendChild(h("p", { class: "mut small", style: "margin-top:12px", text: "Son " + posts.length + " gönderinin ortalama görüntülenmesine göre hesaplanır (telefonunun saatiyle). Az gönderili satırlar yanıltıcı olabilir." }));
   return box;
 }
 
-function viewAyarlar(d) {
-  var at = store("ip_token_at");
-  return h("div", null, [
-    h("h2", { text: "Bağlantı" }),
-    h("div", { class: "card" }, [
-      h("p", { text: "Bağlı hesap: @" + ((d && d.me && d.me.username) || "–") }),
-      h("p", { class: "mut small", text: isIG()
-        ? "Erişim anahtarı yalnızca bu telefonda saklanır ve 60 gün geçerlidir. Uygulamayı açtıkça kendiliğinden yenilenir" + (at ? " (son yenileme: " + dateStr(at) + ")." : ".") + " 60 günden uzun süre hiç açmazsan yeniden anahtar alman gerekir."
-        : "Erişim anahtarı yalnızca bu telefonda saklanır. Bu tür anahtar kendiliğinden yenilenmez; bir gün çalışmayı bırakırsa Meta'dan yenisini üretip tekrar bağlanman gerekir." }),
-      h("button", { class: "btn ghost", text: "Bağlantıyı kes ve verileri sil", onclick: function () {
-        if (this.dataset.sure !== "1") { this.dataset.sure = "1"; this.textContent = "Emin misin? Silmek için tekrar dokun"; return; }
-        ["ip_token", "ip_token_at", "ip_cache", "ip_hist", "ip_igid"].forEach(function (k) { store(k, null); });
-        state.data = null; state.error = ""; render();
-      } })
-    ]),
-    h("h2", { text: "Ana ekrana ekle" }),
-    h("div", { class: "card small mut" }, [
-      h("p", { text: "iPhone: Safari'de Paylaş simgesi → Ana Ekrana Ekle." }),
-      h("p", { style: "margin:0", text: "Android: Chrome menüsü (⋮) → Ana ekrana ekle." })
-    ])
-  ]);
+/* ---------- Kitle ---------- */
+var CINSIYET = { F: "Kadın", M: "Erkek", U: "Belirtilmemiş" };
+function regionName(code) {
+  try { return new Intl.DisplayNames(["tr"], { type: "region" }).of(code) || code; } catch (e) { return code; }
+}
+function viewKitle(d) {
+  var box = h("div"), dm = d.demo || {};
+  function section(title, rows, labelFn, limit) {
+    if (!rows || !rows.length) return false;
+    var total = sum(rows, function (r) { return r.v; }), top = rows[0].v;
+    box.appendChild(h("h2", { text: title }));
+    var c = h("div", { class: "card" });
+    rows.slice(0, limit).forEach(function (r) { c.appendChild(barLine(labelFn(r.k), pct(total ? r.v / total : 0) + " · " + num(r.v), top ? r.v / top : 0)); });
+    box.appendChild(c);
+    return true;
+  }
+  var any = false;
+  any = section("Cinsiyet", dm.gender, function (k) { return CINSIYET[k] || k; }, 3) || any;
+  var ages = dm.age ? dm.age.slice().sort(function (a, b) { return a.k < b.k ? -1 : 1; }) : null;
+  if (ages && ages.length) {
+    var total = sum(ages, function (r) { return r.v; }), top = Math.max.apply(null, ages.map(function (r) { return r.v; }));
+    box.appendChild(h("h2", { text: "Yaş" }));
+    var c = h("div", { class: "card" });
+    ages.forEach(function (r) { c.appendChild(barLine(r.k, pct(total ? r.v / total : 0) + " · " + num(r.v), top ? r.v / top : 0)); });
+    box.appendChild(c); any = true;
+  }
+  any = section("Ülkeler", dm.country, regionName, 8) || any;
+  any = section("Şehirler", dm.city, function (k) { return k; }, 8) || any;
+  if (!any) {
+    box.appendChild(h("h2", { text: "Takipçi kitlesi" }));
+    box.appendChild(h("div", { class: "card mut" }, [
+      h("p", { text: "Kitle verisi gelmedi." }),
+      h("p", { class: "small", style: "margin:0", text: "Instagram bu bilgiyi en az 100 takipçisi olan hesaplar için ve anahtarda istatistik izni (instagram_manage_insights) varsa verir." })
+    ]));
+  } else {
+    box.appendChild(h("p", { class: "mut small", style: "margin-top:12px", text: "Takipçilerinin dağılımıdır. Instagram her başlıkta yalnızca en büyük grupları verir, bu yüzden toplamlar takipçi sayından az olabilir." }));
+  }
+  return box;
 }
 
+/* ---------- Ayarlar ---------- */
+function viewAyarlar() {
+  var list = accounts(), active = cur(), box = h("div");
+  box.appendChild(h("h2", { text: "Hesaplar" }));
+  var card = h("div", { class: "card" });
+  list.forEach(function (a, i) {
+    var on = active && a.uid === active.uid;
+    card.appendChild(h("div", { class: "row between", style: "padding:6px 0" }, [
+      h("div", { class: "grow" }, [h("b", { text: "@" + (a.username || "hesap " + (i + 1)) }), on ? h("span", { class: "small live", text: "  · açık" }) : null]),
+      on ? null : h("button", { class: "chip", text: "Geç", disabled: state.loading, onclick: function () { switchTo(i); } }),
+      h("button", { class: "chip", text: "Kaldır", disabled: state.loading, onclick: function () {
+        if (this.dataset.sure !== "1") { this.dataset.sure = "1"; this.textContent = "Emin misin?"; return; }
+        removeAccount(a.uid); state.data = loadCache(); state.error = ""; state.showToken = false; render();
+        if (cur() && !state.data) refresh();
+      } })
+    ]));
+  });
+  card.appendChild(h("div", { style: "height:8px" }));
+  card.appendChild(h("button", { class: "btn ghost", text: "Hesap ekle", disabled: state.loading, onclick: function () { state.adding = true; state.error = ""; render(); window.scrollTo(0, 0); } }));
+  box.appendChild(card);
+
+  box.appendChild(h("h2", { text: "Erişim anahtarı" }));
+  var tcard = h("div", { class: "card" }, [
+    h("p", { class: "mut small", text: isIG()
+      ? "Anahtar yalnızca bu telefonda saklanır, 60 gün geçerlidir ve uygulamayı açtıkça kendiliğinden yenilenir."
+      : "Anahtar yalnızca bu telefonda saklanır. Bu tür anahtar kendiliğinden yenilenmez; çalışmayı bırakırsa Meta'dan yenisini üretip hesabı yeniden eklemen gerekir." }),
+    h("button", { class: "btn ghost", text: "Anahtarı kopyala", onclick: function () {
+      var b = this, t = active ? active.token : "";
+      function fallback() { state.showToken = true; render(); }
+      try { navigator.clipboard.writeText(t).then(function () { b.textContent = "Kopyalandı"; }, fallback); } catch (e) { fallback(); }
+    } })
+  ]);
+  if (state.showToken && active) {
+    tcard.appendChild(h("p", { class: "mut small", style: "margin:10px 0 6px", text: "Kopyalanamadı. Aşağıdaki metne basılı tutup kopyala:" }));
+    tcard.appendChild(h("textarea", { readonly: "readonly", text: active.token }));
+  }
+  tcard.appendChild(h("p", { class: "mut small", style: "margin:10px 0 0", text: "Ana ekrandaki uygulama ilk açılışta anahtar isterse buradan kopyalayıp oraya yapıştır. Anahtarı kimseyle paylaşma." }));
+  box.appendChild(tcard);
+
+  box.appendChild(h("h2", { text: "Ana ekrana ekle" }));
+  box.appendChild(h("div", { class: "card small mut" }, [
+    h("p", { text: "iPhone: Safari'de Paylaş simgesi → Ana Ekrana Ekle. Logo için eski kısayolu silip yeniden ekle." }),
+    h("p", { style: "margin:0", text: "Android: Chrome menüsü (⋮) → Ana ekrana ekle." })
+  ]));
+  return box;
+}
+
+/* ---------- Kurulum / hesap ekleme ---------- */
 function viewKurulum() {
+  var first = !accounts().length;
   var ta = h("textarea", { placeholder: "Erişim anahtarını (token) buraya yapıştır", autocapitalize: "off", autocomplete: "off", spellcheck: "false" });
-  var idIn = h("input", { type: "text", inputmode: "numeric", placeholder: "Instagram hesap kimliği (yalnızca rakam)", style: "width:100%;background:#0b0d11;border:1px solid var(--line);border-radius:12px;padding:10px;margin-top:10px" });
+  var idIn = h("input", { class: "inp", type: "text", inputmode: "numeric", placeholder: "Instagram hesap kimliği (yalnızca rakam)", style: "margin-top:10px" });
   var btn = h("button", { class: "btn", text: "Bağlan", onclick: function () {
     var v = ta.value.replace(/\s+/g, "");
     if (v.length < 20) { state.error = "Anahtar eksik görünüyor."; render(); return; }
-    var id = idIn.value.replace(/\D+/g, "");
-    store("ip_igid", id || null);
-    state.needId = false;
-    store("ip_token", v); store("ip_token_at", Date.now());
-    if (store("ip_token") !== v) { state.error = "Bu tarayıcı veri saklamaya izin vermiyor (gizli sekme olabilir). Normal sekmede aç."; render(); return; }
-    state.error = ""; refresh();
+    var a = accounts(), prev = store("ip_active") || 0;
+    a.push({ uid: "a" + Date.now().toString(36), token: v, igid: idIn.value.replace(/\D+/g, "") || null, at: Date.now(), username: "", fresh: true, prev: prev });
+    saveAccounts(a);
+    if (accounts().length !== a.length) { state.error = "Bu tarayıcı veri saklamaya izin vermiyor (gizli sekme olabilir). Normal sekmede aç."; render(); return; }
+    store("ip_active", a.length - 1);
+    state.adding = false; state.needId = false; state.error = ""; state.data = null; state.view = "ozet";
+    refresh();
   } });
   return h("div", null, [
-    h("h1", { text: "Insta Panel", style: "margin:18px 2px 4px;font-size:26px" }),
-    h("p", { class: "mut", style: "margin-left:2px", text: "Instagram istatistiklerin, tamamen telefonunda." }),
+    h("h1", { text: first ? "Insta Panel" : "Hesap ekle", style: "margin:18px 2px 4px;font-size:26px" }),
+    h("p", { class: "mut", style: "margin-left:2px", text: first ? "Instagram istatistiklerin, tamamen telefonunda." : "İkinci hesabın için Meta'dan ayrı bir anahtar üret." }),
     state.error ? h("div", { class: "msg", text: state.error }) : null,
-    h("h2", { text: "Bir kereliğine kurulum" }),
+    h("h2", { text: first ? "Bir kereliğine kurulum" : "Adımlar" }),
     h("div", { class: "card" }, [
       h("ol", null, [
-        h("li", { text: "Instagram hesabın profesyonel (içerik üretici ya da işletme) olmalı." }),
-        h("li", null, [h("a", { href: "https://developers.facebook.com/apps/", target: "_blank", rel: "noopener noreferrer", text: "developers.facebook.com/apps" }), " adresinde uygulamana “Manage messaging & content on Instagram” kullanım durumunu ekle."]),
-        h("li", { text: "“API setup with Unified login” bölümünde bir yapılandırma oluştur; izinlerde instagram_basic ve instagram_manage_insights işaretli olsun." }),
-        h("li", { text: "“Generate access tokens” bölümünde hesabını ekle, Instagram'dan test daveti onayla ve “Generate token”a dokun." }),
+        h("li", { text: "Instagram hesabı profesyonel (içerik üretici ya da işletme) ve herkese açık olmalı." }),
+        h("li", null, [h("a", { href: "https://developers.facebook.com/apps/", target: "_blank", rel: "noopener noreferrer", text: "developers.facebook.com/apps" }), " adresinde uygulamanı aç: Use cases → Instagram → Customize → API setup with Unified login."]),
+        h("li", { text: "Yapılandırmanın izinlerinde instagram_basic ve instagram_manage_insights işaretli olsun." }),
+        h("li", { text: "“Generate access tokens” bölümünde hesabı ekle (Add account), Instagram'da test davetini onayla ve “Generate token”a dokun." }),
         h("li", { text: "Çıkan uzun anahtarı kopyalayıp aşağıya yapıştır." })
       ]),
       ta, state.needId ? idIn : null, h("div", { style: "height:10px" }), btn,
+      first ? null : h("button", { class: "btn ghost", text: "Vazgeç", onclick: function () { state.adding = false; state.error = ""; state.needId = false; render(); } }),
       h("p", { class: "mut small", style: "margin:10px 0 0", text: "Anahtar yalnızca bu telefonda saklanır ve sadece Instagram'a gönderilir." })
     ])
   ]);
 }
 
+/* ---------- çizim ve akış ---------- */
+function switchTo(i) {
+  if (state.loading) return;
+  store("ip_active", i);
+  state.data = loadCache(); state.error = ""; state.showToken = false;
+  render();
+  if (!state.data || Date.now() - state.data.at > 15 * 60000) refresh();
+}
 function render() {
   app.textContent = "";
-  var hasToken = !!store("ip_token");
-  nav.classList.toggle("hide", !hasToken);
-  if (!hasToken) { app.appendChild(viewKurulum()); return; }
+  var list = accounts(), active = cur();
+  var setup = !list.length || state.adding;
+  nav.classList.toggle("hide", setup);
+  if (setup) { app.appendChild(viewKurulum()); return; }
   Array.prototype.forEach.call(nav.children, function (b) { b.classList.toggle("on", b.dataset.v === state.view); });
   var d = state.data;
-  app.appendChild(h("div", { class: "row", style: "margin:4px 2px 12px" }, [
-    h("div", { class: "grow mut small", text: state.loading ? "Güncelleniyor…" : d ? "Güncellendi: " + new Date(d.at).toLocaleString("tr-TR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "" }),
+  app.appendChild(h("div", { class: "row", style: "margin:4px 2px 10px" }, [
+    h("div", { class: "grow mut small", text: state.loading ? "Güncelleniyor…" : d ? "Güncellendi: " + timeStr(d.at) : "" }),
     h("button", { class: "chip", text: "Yenile", disabled: state.loading, onclick: refresh })
   ]));
+  if (list.length > 1) {
+    app.appendChild(h("div", { class: "chips" }, list.map(function (a, i) {
+      return h("button", { class: "chip" + (a.uid === active.uid ? " on" : ""), text: "@" + (a.username || "hesap " + (i + 1)), disabled: state.loading, onclick: function () { if (a.uid !== active.uid) switchTo(i); } });
+    })));
+  }
   if (state.error) app.appendChild(h("div", { class: "msg", text: state.error }));
-  if (state.view === "ayarlar") { app.appendChild(viewAyarlar(d)); return; }
+  if (state.view === "ayarlar") { app.appendChild(viewAyarlar()); return; }
   if (!d) {
     if (state.loading) { app.appendChild(h("div", { class: "spin" })); app.appendChild(h("p", { class: "mut", style: "text-align:center", text: "Veriler Instagram'dan alınıyor…" })); }
     return;
   }
-  app.appendChild(state.view === "gonderiler" ? viewGonderiler(d) : state.view === "zaman" ? viewZaman(d) : viewOzet(d));
+  var v = state.view;
+  app.appendChild(v === "gonderiler" ? viewIcerik(d) : v === "analiz" ? viewAnaliz(d) : v === "kitle" ? viewKitle(d) : viewOzet(d));
 }
 
 function refresh() {
-  if (state.loading) return;
+  if (state.loading || !cur()) return;
   state.loading = true; state.error = ""; render();
   loadAll().then(function (d) { state.data = d; }).catch(function (e) {
-    if (e.code === "NOACCOUNT") {
-      store("ip_token", null);
-      state.data = null; state.needId = true;
-      state.error = "Anahtar kabul edildi ama bağlı Instagram hesabı kendiliğinden bulunamadı. Anahtarı yeniden yapıştır ve altındaki kutuya Instagram hesap kimliğini (Meta sayfasında hesabının yanında yazan uzun sayı) gir.";
+    var c = cur(), bad = e.code === 190 || e.code === "NOACCOUNT";
+    if (bad && c && c.fresh) {
+      // yeni eklenen hesap doğrulanamadı: geri al, diğer hesaplara dokunma
+      var prev = c.prev || 0;
+      removeAccount(c.uid);
+      store("ip_active", Math.min(prev, Math.max(0, accounts().length - 1)));
+      state.data = accounts().length ? loadCache() : null;
+      state.adding = true; state.needId = e.code === "NOACCOUNT";
+      state.error = e.code === "NOACCOUNT"
+        ? "Anahtar kabul edildi ama bağlı Instagram hesabı kendiliğinden bulunamadı. Anahtarı yeniden yapıştır ve altındaki kutuya Instagram hesap kimliğini (Meta sayfasında hesabın yanında yazan uzun sayı) gir."
+        : "Erişim anahtarı geçersiz. Meta'dan yeni bir anahtar üretip yapıştır.";
     } else if (e.code === 190) {
-      store("ip_token", null);
-      state.data = null;
-      state.error = "Erişim anahtarı geçersiz ya da süresi dolmuş. Yeni bir anahtar alıp yapıştır.";
+      state.error = "Bu hesabın erişim anahtarı geçersiz ya da süresi dolmuş. Ayarlar'dan hesabı kaldırıp yeni anahtarla tekrar ekle. Kayıtlı veriler o zamana kadar görüntülenir.";
+    } else if (e.code === "NOACCOUNT") {
+      state.error = "Bağlı Instagram hesabı bulunamadı. Ayarlar'dan hesabı kaldırıp yeniden ekle.";
     } else if (e instanceof TypeError) {
-      state.error = "Instagram'a bağlanılamadı. İnternet bağlantını kontrol et. Sayfayı dosya olarak açtıysan bir web adresinden açman gerekir.";
+      state.error = "Instagram'a bağlanılamadı. İnternet bağlantını kontrol et.";
     } else {
       state.error = "Instagram hata döndürdü: " + e.message;
     }
@@ -477,9 +748,9 @@ nav.addEventListener("click", function (e) {
   state.view = b.dataset.v; render(); window.scrollTo(0, 0);
 });
 
-state.data = store("ip_cache");
+state.data = loadCache();
 render();
-if (store("ip_token") && (!state.data || Date.now() - state.data.at > 15 * 60000)) refresh();
+if (cur() && (!state.data || Date.now() - state.data.at > 15 * 60000)) refresh();
 </script>
 </body>
 </html>
