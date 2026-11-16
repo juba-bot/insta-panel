@@ -82,7 +82,7 @@ var API_FB = "https://graph.facebook.com";    // "EAA..." ile başlayan anahtarl
 var DAY = 86400000, CACHE_V = 4;
 var app = document.getElementById("app");
 var nav = document.getElementById("nav");
-var state = { view: "ozet", sort: "views", tab: "posts", period: 7, data: null, loading: false, error: "", needId: false, adding: false, showToken: false, atab: "koc", rsort: "skip", rbusy: false, rmsg: "", detail: null, backY: 0, goalEdit: false };
+var state = { view: "ozet", sort: "views", tab: "posts", period: 7, data: null, loading: false, error: "", needId: false, adding: false, showToken: false, atab: "koc", rsort: "skip", rbusy: false, rmsg: "", detail: null, backY: 0, goalEdit: false, report: false };
 
 /* ---------- küçük yardımcılar ---------- */
 function store(k, v) {
@@ -416,6 +416,90 @@ function followerDelta(hist, days) {
   return { d: last.f - base.f, days: Math.max(1, Math.round((last.t - base.t) / DAY)) };
 }
 
+/* ---------- Haftalık rapor kartı (görsel) ---------- */
+function reportStats(d, hist) {
+  var days = 7, a = d.at - days * DAY, b = d.at - 2 * days * DAY;
+  var now = d.media.filter(function (m) { return ts(m) >= a; });
+  var prev = d.media.filter(function (m) { return ts(m) < a && ts(m) >= b; });
+  var oldest = d.media.length ? Math.min.apply(null, d.media.map(ts)) : d.at;
+  var prevKnown = d.media.length < 50 || oldest <= b;
+  var v = sum(now, function (m) { return m.views; }), pv = sum(prev, function (m) { return m.views; });
+  var fd = followerDelta(hist, days);
+  var best = now.slice().sort(function (x, y) { return (y.views != null ? y.views : y.eng) - (x.views != null ? x.views : x.eng); })[0] || null;
+  return { n: now.length, views: now.length ? v : null, change: prevKnown && prev.length && pv > 0 ? (v - pv) / pv : null,
+    rate: avg(now, function (m) { return m.rate; }), fd: fd, best: best, from: a, to: d.at };
+}
+function drawReport(d, hist) {
+  var W = 1080, H = 1350, st = reportStats(d, hist), cv = document.createElement("canvas");
+  cv.width = W; cv.height = H;
+  var c = cv.getContext("2d"), F = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif";
+  function rr(x, y, w, hh, r) { c.beginPath(); c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + hh, r); c.arcTo(x + w, y + hh, x, y + hh, r); c.arcTo(x, y + hh, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath(); }
+  function txt(t, x, y, size, color, weight, align) { c.font = (weight || 400) + " " + size + "px " + F; c.fillStyle = color; c.textAlign = align || "left"; c.fillText(t, x, y); }
+  function fit(t, maxW) { while (t.length > 1 && c.measureText(t).width > maxW) t = t.slice(0, -1); return t; }
+  var g = c.createLinearGradient(0, 0, W, H); g.addColorStop(0, "#0f1115"); g.addColorStop(1, "#1a1d26");
+  c.fillStyle = g; c.fillRect(0, 0, W, H);
+  var ac = c.createLinearGradient(0, 0, W, 0); ac.addColorStop(0, "#ff5c8a"); ac.addColorStop(1, "#ffb347");
+  c.fillStyle = ac; c.fillRect(0, 0, W, 14);
+  txt("HAFTALIK RAPOR", 70, 120, 30, "#ffb347", 700);
+  txt("@" + (d.me.username || ""), 70, 200, 76, "#eef0f4", 700);
+  txt(dateStr(st.from) + " – " + dateStr(st.to), 70, 255, 34, "#8b92a1", 400);
+  var tiles = [
+    ["Takipçi", num(d.me.followers_count), null],
+    ["Takipçi değişimi", st.fd ? signed(st.fd.d) : "–", st.fd ? (st.fd.d >= 0 ? "#4cd39a" : "#ff6b6b") : null],
+    ["Paylaşılan gönderi", num(st.n), null],
+    ["Görüntülenme", num(st.views), null],
+    ["Önceki haftaya göre", st.change == null ? "–" : (st.change >= 0 ? "+" : "−") + pct(Math.abs(st.change)), st.change == null ? null : st.change >= 0 ? "#4cd39a" : "#ff6b6b"],
+    ["Etkileşim oranı", pct(st.rate), null]
+  ];
+  tiles.forEach(function (t, i) {
+    var x = 70 + (i % 2) * 470, y = 310 + Math.floor(i / 2) * 210, w = 440, hh = 180;
+    c.fillStyle = "#181b22"; rr(x, y, w, hh, 28); c.fill();
+    c.strokeStyle = "#262a34"; c.lineWidth = 2; rr(x, y, w, hh, 28); c.stroke();
+    txt(t[0], x + 32, y + 56, 28, "#8b92a1", 400);
+    txt(t[1], x + 32, y + 138, 74, t[2] || "#eef0f4", 700);
+  });
+  var by = 960;
+  c.fillStyle = "#181b22"; rr(70, by, 940, 260, 28); c.fill();
+  c.strokeStyle = "#262a34"; rr(70, by, 940, 260, 28); c.stroke();
+  txt("HAFTANIN EN İYİSİ", 102, by + 62, 26, "#ffb347", 700);
+  if (st.best) {
+    var cap = (st.best.caption || "(açıklama yok)").split("\n")[0].replace(/\s+/g, " ");
+    c.font = "600 38px " + F;
+    var l1 = fit(cap, 876); txt(l1, 102, by + 124, 38, "#eef0f4", 600);
+    var rest = cap.slice(l1.length).trim();
+    if (rest) { c.font = "600 38px " + F; txt(fit(rest, 876), 102, by + 172, 38, "#eef0f4", 600); }
+    txt(kindOf(st.best) + " · " + num(st.best.views) + " görüntülenme · " + num(st.best.eng) + " etkileşim", 102, by + 228, 30, "#8b92a1", 400);
+  } else {
+    txt("Bu hafta gönderi yok.", 102, by + 132, 38, "#8b92a1", 400);
+  }
+  txt("Insta Panel", 70, 1295, 28, "#8b92a1", 600);
+  txt(timeStr(d.at), 1010, 1295, 28, "#8b92a1", 400, "right");
+  return cv;
+}
+function viewRapor(d) {
+  var box = h("div"), hist = store(akey("hist")) || [];
+  box.appendChild(h("div", { class: "chips" }, [h("button", { class: "chip", text: "‹ Geri", onclick: function () { state.report = false; render(); window.scrollTo(0, 0); } })]));
+  var cv = drawReport(d, hist), url = "";
+  try { url = cv.toDataURL("image/png"); } catch (e) {}
+  box.appendChild(url ? h("img", { src: url, alt: "Haftalık rapor", style: "width:100%;border-radius:16px;border:1px solid var(--line);display:block" })
+    : h("div", { class: "msg", text: "Görsel oluşturulamadı." }));
+  var info = h("p", { class: "mut small", style: "margin:10px 0 0", text: "Görsele basılı tutup “Görüntüyü Kaydet” de ya da aşağıdaki düğmeyi kullan." });
+  box.appendChild(h("div", { style: "height:12px" }));
+  box.appendChild(h("button", { class: "btn", text: "Paylaş / Kaydet", onclick: function () {
+    try {
+      cv.toBlob(function (blob) {
+        try {
+          var file = new File([blob], "haftalik-rapor.png", { type: "image/png" });
+          if (navigator.canShare && navigator.canShare({ files: [file] })) navigator.share({ files: [file] }).catch(function () {});
+          else info.textContent = "Paylaşım bu tarayıcıda açılmadı. Görsele basılı tutup “Görüntüyü Kaydet” de.";
+        } catch (e) { info.textContent = "Paylaşım bu tarayıcıda açılmadı. Görsele basılı tutup “Görüntüyü Kaydet” de."; }
+      }, "image/png");
+    } catch (e) { info.textContent = "Görsele basılı tutup “Görüntüyü Kaydet” de."; }
+  } }));
+  box.appendChild(info);
+  return box;
+}
+
 /* ---------- Özet ---------- */
 function goalCard(d, hist) {
   var c = cur(), goal = c.goal, f = d.me.followers_count || 0;
@@ -516,6 +600,7 @@ function viewOzet(d) {
   box.appendChild(h("h2", { text: "Dönem özeti" }));
   box.appendChild(chipRow([[7, "Son 7 gün"], [30, "Son 30 gün"]], state.period, function (p) { state.period = p; render(); }));
   box.appendChild(periodCard(d, hist));
+  box.appendChild(h("button", { class: "btn ghost", style: "margin-top:10px", text: "Haftalık rapor kartı oluştur", onclick: function () { state.report = true; render(); window.scrollTo(0, 0); } }));
 
   box.appendChild(h("h2", { text: "Hesap geneli · son 28 gün" }));
   var t = d.totals || {};
@@ -1464,7 +1549,7 @@ function viewKurulum() {
 function switchTo(i) {
   if (state.loading) return;
   store("ip_active", i);
-  state.data = loadCache(); state.error = ""; state.showToken = false; state.detail = null; state.goalEdit = false;
+  state.data = loadCache(); state.error = ""; state.showToken = false; state.detail = null; state.goalEdit = false; state.report = false;
   render();
   if (!state.data || Date.now() - state.data.at > 15 * 60000) refresh();
 }
@@ -1491,6 +1576,7 @@ function render() {
     if (state.loading) { app.appendChild(h("div", { class: "spin" })); app.appendChild(h("p", { class: "mut", style: "text-align:center", text: "Veriler Instagram'dan alınıyor…" })); }
     return;
   }
+  if (state.report) { app.appendChild(viewRapor(d)); return; }
   var v = state.view, dm = null;
   if (state.detail) d.media.forEach(function (m) { if (m.id === state.detail) dm = m; });
   if (dm) { app.appendChild(viewDetay(d, dm)); return; }
@@ -1527,7 +1613,7 @@ function refresh() {
 
 nav.addEventListener("click", function (e) {
   var b = e.target.closest("button"); if (!b) return;
-  state.view = b.dataset.v; state.detail = null; state.goalEdit = false; render(); window.scrollTo(0, 0);
+  state.view = b.dataset.v; state.detail = null; state.report = false; state.goalEdit = false; render(); window.scrollTo(0, 0);
 });
 
 state.data = loadCache();
