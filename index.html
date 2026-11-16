@@ -79,10 +79,10 @@ svg{display:block;width:100%;height:auto}
 "use strict";
 var API_IG = "https://graph.instagram.com";   // "IG..." ile başlayan anahtarlar (Instagram girişi)
 var API_FB = "https://graph.facebook.com";    // "EAA..." ile başlayan anahtarlar (Unified login)
-var DAY = 86400000, CACHE_V = 3;
+var DAY = 86400000, CACHE_V = 4;
 var app = document.getElementById("app");
 var nav = document.getElementById("nav");
-var state = { view: "ozet", sort: "views", tab: "posts", period: 7, data: null, loading: false, error: "", needId: false, adding: false, showToken: false, atab: "turler", rsort: "comp", detail: null, backY: 0, goalEdit: false };
+var state = { view: "ozet", sort: "views", tab: "posts", period: 7, data: null, loading: false, error: "", needId: false, adding: false, showToken: false, atab: "koc", rsort: "skip", rbusy: false, rmsg: "", detail: null, backY: 0, goalEdit: false };
 
 /* ---------- küçük yardımcılar ---------- */
 function store(k, v) {
@@ -133,7 +133,7 @@ function setCur(patch) {
 function akey(name) { var c = cur(); return "ip_" + name + "_" + (c ? c.uid : "x"); }
 function removeAccount(uid) {
   var a = accounts().filter(function (x) { return x.uid !== uid; });
-  ["cache", "hist", "stories"].forEach(function (n) { store("ip_" + n + "_" + uid, null); });
+  ["cache", "hist", "stories", "snap", "rhist"].forEach(function (n) { store("ip_" + n + "_" + uid, null); });
   saveAccounts(a); store("ip_active", 0);
 }
 // Önceki sürümden geçiş: giriş ve takipçi geçmişi korunur
@@ -202,13 +202,45 @@ function readInsights(j) {
   (j.data || []).forEach(function (d) { o[d.name] = d.values && d.values[0] ? d.values[0].value : (d.total_value ? d.total_value.value : null); });
   return o;
 }
-function insightsChain(id, list) {
+function insightsChain(id, list, start) {
   var p = Promise.reject(new Error("start"));
-  list.forEach(function (metric) { p = p.catch(function () { return api("/" + id + "/insights", { metric: metric }).then(readInsights); }); });
-  return p.catch(function () { return {}; });
+  list.forEach(function (metric, idx) {
+    if (idx < (start || 0)) return;
+    p = p.catch(function () { return api("/" + id + "/insights", { metric: metric }).then(function (j) { return { o: readInsights(j), idx: idx }; }); });
+  });
+  return p.catch(function () { return { o: {}, idx: null }; });
 }
 var M_FULL = "reach,views,saved,shares,total_interactions";
 var M_REEL = M_FULL + ",ig_reels_avg_watch_time,ig_reels_video_view_total_time";
+var mStat = { reel: { ok: 0, fail: 0 }, other: { ok: 0, fail: 0 } }; // yeni ölçümler hiç çalışmıyorsa kalan gönderilerde boşuna denenmez
+function mediaInsights(m) {
+  var reel = m.media_product_type === "REELS" || m.media_type === "VIDEO", key = reel ? "reel" : "other";
+  var list = reel ? [M_REEL + ",reels_skip_rate,reposts", M_REEL, M_FULL, "reach,saved"] : [M_FULL + ",reposts", M_FULL, "reach,saved"];
+  var st = mStat[key], start = !st.ok && st.fail >= 4 ? 1 : 0;
+  return insightsChain(m.id, list, start).then(function (r) {
+    if (!start) { if (r.idx === 0) st.ok++; else st.fail++; }
+    return r.o;
+  });
+}
+function parseOnline(j) {
+  var vals = j && j.data && j.data[0] && j.data[0].values;
+  if (!vals) return null;
+  var sumG = [], cnt = [], any = false, days = 0, a, b;
+  for (a = 0; a < 7; a++) { sumG.push([]); cnt.push([]); for (b = 0; b < 24; b++) { sumG[a].push(0); cnt[a].push(0); } }
+  vals.forEach(function (v) {
+    if (!v.value || typeof v.value !== "object" || !Object.keys(v.value).length) return;
+    var start = new Date(v.end_time).getTime() - DAY; // kayıt, bitiş zamanından önceki 24 saati kapsar
+    if (isNaN(start)) return;
+    days++;
+    Object.keys(v.value).forEach(function (hk) {
+      var t = new Date(start + Number(hk) * 3600000);
+      sumG[t.getDay()][t.getHours()] += v.value[hk] || 0; cnt[t.getDay()][t.getHours()]++;
+      if (v.value[hk]) any = true;
+    });
+  });
+  if (!any) return null;
+  return { days: days, grid: sumG.map(function (r, x) { return r.map(function (v, y) { return cnt[x][y] ? v / cnt[x][y] : null; }); }) };
+}
 function pool(items, size, fn) {
   var i = 0, out = new Array(items.length);
   function next() {
@@ -236,7 +268,7 @@ function demoCall(root, breakdown) {
 
 function loadAll() {
   var until = Math.floor(Date.now() / 1000), since = until - 28 * 86400;
-  var out = { v: CACHE_V }, root = "/me";
+  var out = { v: CACHE_V }, root = "/me", rivalNames = (cur().rivals || []).slice(0, 5);
   function tot(metric) { return soft(api(root + "/insights", { metric: metric, period: "day", metric_type: "total_value", since: since, until: until })); }
   function brk(metric) {
     return soft(api(root + "/insights", { metric: metric, period: "day", metric_type: "total_value", breakdown: "follow_type", since: since, until: until })).then(function (j) {
@@ -247,6 +279,7 @@ function loadAll() {
       return { total: t.value, parts: parts };
     });
   }
+  mStat = { reel: { ok: 0, fail: 0 }, other: { ok: 0, fail: 0 } };
   return refreshTokenIfNeeded().then(findRoot).then(function (r) {
     root = r;
     return api(root, { fields: "username,name,profile_picture_url,followers_count,follows_count,media_count" });
@@ -259,7 +292,8 @@ function loadAll() {
       tot("reach"), tot("views"), tot("accounts_engaged"), tot("total_interactions"),
       soft(api(root + "/stories", { fields: "id,media_type,thumbnail_url,media_url,permalink,timestamp" })),
       demoCall(root, "country"), demoCall(root, "city"), demoCall(root, "age"), demoCall(root, "gender"),
-      brk("follows_and_unfollows"), brk("reach"), brk("views"), tot("profile_views"), tot("profile_links_taps")
+      brk("follows_and_unfollows"), brk("reach"), brk("views"), tot("profile_views"), tot("profile_links_taps"),
+      soft(api(root + "/insights", { metric: "online_followers", period: "lifetime", since: until - 15 * 86400, until: until - 86400 }))
     ]);
   }).then(function (r) {
     out.media = (r[0].data || []);
@@ -269,24 +303,38 @@ function loadAll() {
     out.totals = { reach: total(r[2]), views: total(r[3]), engaged: total(r[4]), interactions: total(r[5]) };
     out.liveStories = (r[6] && r[6].data) || [];
     out.demo = { country: r[7], city: r[8], age: r[9], gender: r[10] };
+    out.online = parseOnline(r[16]);
     out.growth = { fu: r[11], reach: r[12], views: r[13], profileViews: total(r[14]), linkTaps: total(r[15]) };
     return Promise.all([
-      pool(out.media, 6, function (m) {
-        var reel = m.media_product_type === "REELS" || m.media_type === "VIDEO";
-        return insightsChain(m.id, reel ? [M_REEL, M_FULL, "reach,saved"] : [M_FULL, "reach,saved"]);
-      }),
-      pool(out.liveStories, 4, function (s) { return insightsChain(s.id, ["reach,views,replies,shares,total_interactions", "reach,replies"]); })
+      pool(out.media, 6, mediaInsights),
+      pool(out.liveStories, 4, function (s) { return insightsChain(s.id, ["reach,views,replies,shares,total_interactions", "reach,replies"]).then(function (x) { return x.o; }); }),
+      pool(rivalNames, 2, function (n) { return fetchRival(root, n); })
     ]);
   }).then(function (res) {
     out.media.forEach(function (m, i) {
       var x = res[0][i] || {};
       m.reach = x.reach; m.views = x.views; m.saved = x.saved; m.shares = x.shares;
       m.watch = x.ig_reels_avg_watch_time; m.watchTotal = x.ig_reels_video_view_total_time; // milisaniye
+      m.skip = x.reels_skip_rate; m.reposts = x.reposts;
       m.likes = m.like_count || 0; m.comments = m.comments_count || 0;
       m.eng = x.total_interactions != null ? x.total_interactions : m.likes + m.comments + (x.saved || 0) + (x.shares || 0);
       m.rate = m.reach ? m.eng / m.reach : null;
     });
     out.at = Date.now();
+
+    // rakipler
+    out.rivals = {};
+    rivalNames.forEach(function (n, i) { out.rivals[n] = res[2][i]; saveRivalHist(n, res[2][i], out.at); });
+
+    // gönderi gidişatı: 14 günden yeni gönderilerin görüntülenmesi her açılışta kaydedilir
+    var snaps = store(akey("snap")) || {}, keep = {};
+    out.media.forEach(function (m) {
+      if (out.at - ts(m) > 14 * DAY && !snaps[m.id]) return;
+      var list = snaps[m.id] || [], last = list[list.length - 1];
+      if (m.views != null && out.at - ts(m) <= 14 * DAY && (!last || out.at - last[0] > 20 * 60000)) list.push([out.at, m.views]);
+      if (list.length) keep[m.id] = list.slice(-60);
+    });
+    store(akey("snap"), keep);
 
     // hikâye arşivi: hikâyeler 24 saatte silindiği için görülenler burada saklanır
     var arch = store(akey("stories")) || [], liveIds = {};
@@ -318,7 +366,7 @@ function loadAll() {
 }
 
 /* ---------- grafik ve ortak parçalar ---------- */
-function lineChart(points, color) {
+function lineChart(points, color, withTime) {
   var W = 320, H = 110, P = 6;
   if (!points || points.length < 2) return h("p", { class: "mut small", style: "margin:0", text: "Grafik için henüz yeterli veri yok." });
   var vals = points.map(function (p) { return p.v; });
@@ -339,9 +387,9 @@ function lineChart(points, color) {
   pl.setAttribute("stroke-width", "2.2"); pl.setAttribute("stroke-linejoin", "round"); pl.setAttribute("stroke-linecap", "round");
   svg.appendChild(area); svg.appendChild(pl);
   return h("div", null, [svg, h("div", { class: "row between small mut", style: "margin-top:4px" }, [
-    h("span", { text: dateStr(points[0].t) }),
+    h("span", { text: (withTime ? timeStr : dateStr)(points[0].t) }),
     h("span", { text: "en düşük " + num(Math.min.apply(null, vals)) + " · en yüksek " + num(Math.max.apply(null, vals)) }),
-    h("span", { text: dateStr(points[points.length - 1].t) })
+    h("span", { text: (withTime ? timeStr : dateStr)(points[points.length - 1].t) })
   ])]);
 }
 function stat(label, value, extra) { return h("div", { class: "card stat" }, [h("b", { text: value }), h("span", { text: label }), extra]); }
@@ -458,6 +506,10 @@ function viewOzet(d) {
     stat("Gönderi başı ort. etkileşim", num(avg(d.media, function (m) { return m.eng; })))
   ]));
 
+  box.appendChild(h("h2", { text: "Koç · öne çıkanlar" }));
+  coach(d).slice(0, 3).forEach(function (t) { box.appendChild(tipCard(t)); });
+  box.appendChild(h("button", { class: "btn ghost", text: "Tüm önerileri gör", onclick: function () { state.view = "analiz"; state.atab = "koc"; render(); window.scrollTo(0, 0); } }));
+
   box.appendChild(h("h2", { text: "Takipçi hedefi" }));
   box.appendChild(goalCard(d, hist));
 
@@ -534,7 +586,10 @@ function viewPosts(d) {
   });
   var top = key === "time" ? 0 : Math.max.apply(null, list.map(function (m) { return m[key] || 0; }).concat([0]));
   var card = h("div", { class: "card", style: "padding:2px 14px" });
-  list.forEach(function (m, i) { card.appendChild(postRow(m, "#" + (i + 1) + " · " + kindOf(m) + " · " + dateStr(m.timestamp), key, top)); });
+  list.forEach(function (m, i) {
+    var pc = pace(d, m);
+    card.appendChild(postRow(m, "#" + (i + 1) + " · " + kindOf(m) + " · " + dateStr(m.timestamp) + (pc && pc.hot ? " · Yükselişte" : ""), key, top));
+  });
   if (!list.length) card.appendChild(h("p", { class: "mut", style: "padding:14px 0;margin:0", text: "Henüz gönderi yok." }));
   box.appendChild(card);
   box.appendChild(h("p", { class: "mut small", style: "margin-top:12px", text: "Tüm rakamlar ve hesap ortalamasıyla karşılaştırma için bir gönderiye dokun." }));
@@ -559,8 +614,8 @@ function viewDetay(d, m) {
   function row(label, v, pool, get, fmt, lowerIsBetter) {
     if (v == null) return null;
     var a = avg(pool, get), others = pool.map(get).filter(function (x) { return x != null; });
-    var rank = others.filter(function (x) { return x > v; }).length + 1;
-    var diff = a ? (v - a) / a : null, cls = diff == null || Math.abs(diff) < 0.005 ? "mut" : diff > 0 ? "up" : "down";
+    var rank = others.filter(function (x) { return lowerIsBetter ? x < v : x > v; }).length + 1;
+    var diff = a ? (v - a) / a : null, cls = diff == null || Math.abs(diff) < 0.005 ? "mut" : (diff > 0) !== !!lowerIsBetter ? "up" : "down";
     return h("div", { class: "line" }, [
       h("div", { class: "row between" }, [h("span", { text: label }), h("b", { text: fmt(v) })]),
       h("div", { class: "row between small" }, [
@@ -570,26 +625,39 @@ function viewDetay(d, m) {
     ]);
   }
   function f(k) { return function (x) { return x[k]; }; }
+  var pc = pace(d, m), sn = (store(akey("snap")) || {})[m.id] || [];
+  if ((pc && pc.age <= 14 * 24) || sn.length >= 2) {
+    box.appendChild(h("h2", { text: "Gidişat" }));
+    var gc = h("div", { class: "card" });
+    if (pc && pc.age <= 14 * 24) {
+      gc.appendChild(h("p", { style: pc.hot ? "color:var(--ok);font-weight:600" : null, text: (pc.hot ? "Yükselişte. " : "") + "Yayınlanalı " + ageStr(pc.age) + " oldu; şimdiden olgun " + (pc.same ? kindOf(m) + " " : "") + "gönderilerinin ortalamasının " + pct(pc.ratio) + " kadarına ulaştı (ortalama " + num(pc.base) + ")." }));
+    }
+    gc.appendChild(sn.length >= 2 ? lineChart(sn.map(function (x) { return { t: x[0], v: x[1] }; }), "#ffb347", true)
+      : h("p", { class: "mut small", style: "margin:0", text: "Görüntülenme eğrisi, paneli birkaç kez açtıktan sonra burada çizilir." }));
+    box.appendChild(gc);
+  }
   box.appendChild(h("h2", { text: "Rakamlar ve hesap ortalaması" }));
   var rows = [
     row("Görüntülenme", m.views, all, f("views"), num), row("Erişim", m.reach, all, f("reach"), num),
     row("Beğeni", m.likes, all, f("likes"), num), row("Yorum", m.comments, all, f("comments"), num),
     row("Kaydetme", m.saved, all, f("saved"), num), row("Paylaşım", m.shares, all, f("shares"), num),
+    row("Yeniden paylaşım (repost)", m.reposts, all, f("reposts"), num),
     row("Toplam etkileşim", m.eng, all, f("eng"), num), row("Etkileşim oranı", m.rate, all, f("rate"), pct)
   ].filter(Boolean);
   box.appendChild(h("div", { class: "card" }, rows.length ? rows : [h("p", { class: "mut", style: "margin:0", text: "Bu gönderi için istatistik gelmedi." })]));
 
-  if (isReel(m) && (m.watch != null || m.watchTotal != null)) {
+  if (isReel(m) && (m.watch != null || m.watchTotal != null || m.skip != null)) {
     box.appendChild(h("h2", { text: "İzlenme süresi (Reels ortalamasına göre)" }));
     var dur = durs[m.id];
     box.appendChild(h("div", { class: "card" }, [
       row("Ortalama izlenme süresi", m.watch, reels, f("watch"), secs),
       row("Toplam izlenme süresi", m.watchTotal, reels, f("watchTotal"), hoursStr),
       row("Tamamlama (ort. izlenme ÷ video süresi)", completion(m, durs), reels, function (x) { return completion(x, durs); }, pct),
+      row("Atlama oranı (ilk saniyelerde geçenler)", skipFrac(m), reels, skipFrac, pct, true),
       h("p", { class: "mut small", style: "margin:0", text: dur ? "Video süresi: " + secs(dur * 1000) : "Video süresi henüz okunamadı; Analiz → Reels sekmesini açınca okunur." })
     ].filter(Boolean)));
   }
-  box.appendChild(h("p", { class: "mut small", style: "margin-top:12px", text: "Ortalamalar son " + all.length + " gönderiye göredir. Yeşil ortalamanın üstünde, kırmızı altında demektir." }));
+  box.appendChild(h("p", { class: "mut small", style: "margin-top:12px", text: "Ortalamalar son " + all.length + " gönderiye göredir. Yeşil ortalamadan iyi, kırmızı kötü demektir (atlama oranında düşük olan iyidir)." }));
   return box;
 }
 function viewStories(d) {
@@ -633,7 +701,7 @@ function viewIcerik(d) {
 
 /* ---------- Analiz ---------- */
 var GUNLER = ["Pazar", "Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi"];
-var ATABS = [["turler", "Türler"], ["zaman", "Zaman"], ["reels", "Reels"], ["etiket", "Etiketler"], ["aciklama", "Açıklama"], ["duzen", "Düzen"], ["buyume", "Büyüme"], ["karsilastir", "Karşılaştır"]];
+var ATABS = [["koc", "Koç"], ["rakip", "Rakipler"], ["turler", "Türler"], ["zaman", "Zaman"], ["reels", "Reels"], ["etiket", "Etiketler"], ["aciklama", "Açıklama"], ["duzen", "Düzen"], ["buyume", "Büyüme"], ["karsilastir", "Karşılaştır"]];
 function score(m) { return m.views != null ? m.views : m.eng; }
 function emptyCard(text) { return h("div", { class: "card mut" }, [h("p", { style: "margin:0", text: text })]); }
 function note(text) { return h("p", { class: "mut small", style: "margin-top:12px", text: text }); }
@@ -666,6 +734,7 @@ function aTurler(d, box) {
 
 function aZaman(d, box) {
   var posts = d.media;
+  onlineSection(d, box);
   function group(keyFn, labelFn) {
     var gg = {};
     posts.forEach(function (m) {
@@ -683,7 +752,7 @@ function aZaman(d, box) {
     rows.forEach(function (r) { c.appendChild(barLine(r.label, "ort. " + num(r.avg) + " · " + r.n + " gönderi", top ? r.avg / top : 0)); });
     box.appendChild(c);
   }
-  section("En iyi gün", group(function (t) { return t.getDay(); }, function (k) { return GUNLER[k]; }));
+  section("Kendi gönderilerine göre en iyi gün", group(function (t) { return t.getDay(); }, function (k) { return GUNLER[k]; }));
   section("En iyi saat aralığı", group(function (t) { return Math.floor(t.getHours() / 3) * 3; }, function (k) {
     k = Number(k); return ("0" + k).slice(-2) + ":00 – " + ("0" + (k + 3)).slice(-2) + ":00";
   }));
@@ -723,34 +792,37 @@ function loadDurations(d) {
   }
   next(); next(); next();
 }
-var RSORTS = [["comp", "Tamamlama"], ["watch", "Ort. izlenme"], ["watchTotal", "Toplam izlenme"]];
+var RSORTS = [["skip", "Kanca (en az atlanan)"], ["comp", "Tamamlama"], ["watch", "Ort. izlenme"], ["watchTotal", "Toplam izlenme"]];
 function aReels(d, box) {
   var durs = durations();
-  var reels = d.media.filter(function (m) { return isReel(m) && (m.watch != null || m.watchTotal != null); });
-  box.appendChild(h("h2", { text: "Reels izlenme süresi" }));
+  var reels = d.media.filter(function (m) { return isReel(m) && (m.watch != null || m.watchTotal != null || m.skip != null); });
+  box.appendChild(h("h2", { text: "Reels: kanca ve izlenme süresi" }));
   if (!reels.length) {
     box.appendChild(emptyCard(d.media.some(isReel) ? "İzlenme süresi verisi gelmedi. Anahtarda istatistik izni olduğundan emin ol; çok yeni videolarda veri birkaç saat gecikebilir." : "Son gönderiler arasında Reels yok."));
     return;
   }
   loadDurations(d);
   reels.forEach(function (m) { m._comp = completion(m, durs); });
+  var hasSkip = reels.some(function (m) { return m.skip != null; });
   var known = reels.filter(function (m) { return m._comp != null; });
   box.appendChild(h("div", { class: "grid" }, [
     stat("Ort. izlenme süresi", secs(avg(reels, function (m) { return m.watch; }))),
     stat("Toplam izlenme", hoursStr(sum(reels, function (m) { return m.watchTotal; }))),
     stat("Ort. tamamlama", pct(avg(known, function (m) { return m._comp; })), h("div", { class: "small mut", text: known.length + " / " + reels.length + " videonun süresi okundu" })),
-    stat("Reels sayısı", num(reels.length))
+    hasSkip ? stat("Ort. atlama oranı", pct(avg(reels, skipFrac)), h("div", { class: "small mut", text: "düşük olan iyi · " + reels.length + " Reels" })) : stat("Reels sayısı", num(reels.length))
   ]));
   box.appendChild(h("div", { style: "height:10px" }));
   var key = state.rsort || "comp";
+  if (key === "skip" && !hasSkip) key = "comp";
   if (key === "comp" && !known.length) key = "watch";
-  box.appendChild(chipRow(RSORTS, key, function (s) { state.rsort = s; render(); }));
-  function val(m) { return key === "comp" ? m._comp : m[key]; }
+  box.appendChild(chipRow(hasSkip ? RSORTS : RSORTS.slice(1), key, function (s) { state.rsort = s; render(); }));
+  function val(m) { return key === "comp" ? m._comp : key === "skip" ? (skipFrac(m) == null ? null : 1 - skipFrac(m)) : m[key]; }
   var list = reels.slice().sort(function (a, b) { return (val(b) == null ? -1 : val(b)) - (val(a) == null ? -1 : val(a)); });
   var top = Math.max.apply(null, list.map(function (m) { return val(m) || 0; }).concat([0]));
   var card = h("div", { class: "card", style: "padding:2px 14px" });
   list.forEach(function (m, i) {
     var row = postRow(m, "#" + (i + 1) + " · " + dateStr(m.timestamp), null, 0, [
+      hasSkip ? h("span", null, [h("b", { text: pct(skipFrac(m)) }), " atlama"]) : null,
       h("span", null, [h("b", { text: secs(m.watch) }), " ort. izlenme"]),
       h("span", null, [h("b", { text: durs[m.id] ? secs(durs[m.id] * 1000) : "–" }), " video süresi"]),
       h("span", null, [h("b", { text: pct(m._comp) }), " tamamlama"]),
@@ -761,7 +833,7 @@ function aReels(d, box) {
     card.appendChild(row);
   });
   box.appendChild(card);
-  box.appendChild(note("Tamamlama = ortalama izlenme süresi ÷ video süresi. Instagram tekrar izlemeleri de saydığı için %100'ü geçebilir. Video süresini Instagram vermediğinden telefonun videonun başlık bilgisini yükleyerek okur; okunamayan videolarda tamamlama boş kalır."));
+  box.appendChild(note((hasSkip ? "Atlama oranı, videoyu ilk saniyelerde geçenlerin payıdır; düşükse açılışın (kancan) tutuyor demektir. " : "Atlama oranı bu hesap için gelmedi; Instagram verdiğinde burada kendiliğinden görünür. ") + "Tamamlama = ortalama izlenme süresi ÷ video süresi. Instagram tekrar izlemeleri de saydığı için %100'ü geçebilir. Video süresini Instagram vermediğinden telefonun videonun başlık bilgisini yükleyerek okur; okunamayan videolarda tamamlama boş kalır."));
 }
 
 var TAG_RE;
@@ -916,6 +988,313 @@ function aBuyume(d, box) {
   box.appendChild(note("Takipçin olmayanların payı yüksekse içeriklerin keşfete ve önerilere çıkıyor demektir. “Takibi bırakan” sayısına Instagram'dan ayrılan hesaplar da dahildir."));
 }
 
+/* ---------- Rakipler (Business Discovery: herkese açık rakamlar) ---------- */
+function cleanUser(s) {
+  s = String(s || "").trim().toLowerCase().replace(/^https?:\/\/(www\.)?instagram\.com\//, "").replace(/^@/, "").replace(/[\/?#].*$/, "");
+  return /^[a-z0-9._]{1,30}$/.test(s) ? s : null;
+}
+function rivalFields(name, withViews) {
+  return "business_discovery.username(" + name + "){username,name,profile_picture_url,followers_count,media_count,media.limit(25){timestamp,like_count,comments_count,media_type,media_product_type,permalink,caption" + (withViews ? ",view_count" : "") + "}}";
+}
+function fetchRival(root, name) {
+  if (isIG()) return Promise.resolve({ err: "Bu anahtar türü rakip verisini desteklemiyor." });
+  function parse(j) {
+    var b = j && j.business_discovery;
+    if (!b) throw new Error("Veri gelmedi");
+    return { username: b.username || name, name: b.name || "", followers: b.followers_count, mediaCount: b.media_count, at: Date.now(),
+      posts: ((b.media && b.media.data) || []).map(function (p) {
+        return { timestamp: p.timestamp, likes: p.like_count, comments: p.comments_count, views: p.view_count, kind: kindOf(p), permalink: p.permalink, caption: (p.caption || "").split("\n")[0].slice(0, 120) };
+      }) };
+  }
+  return api(root, { fields: rivalFields(name, true) }).then(parse)
+    .catch(function () { return api(root, { fields: rivalFields(name, false) }).then(parse); })
+    .catch(function (e) { return { err: e.message || "Alınamadı" }; });
+}
+function saveRivalHist(name, res, at) {
+  if (!res || res.err || res.followers == null) return;
+  var all = store(akey("rhist")) || {}, hist = all[name] || [], key = dayKey(at);
+  hist = hist.filter(function (x) { return x.k !== key; });
+  hist.push({ k: key, t: at, f: res.followers });
+  all[name] = hist.slice(-200);
+  store(akey("rhist"), all);
+}
+function rivalStats(posts, followers, at) {
+  var last28 = posts.filter(function (p) { return ts(p) >= at - 28 * DAY; });
+  var al = avg(posts, function (p) { return p.likes; }), ac = avg(posts, function (p) { return p.comments; });
+  return { weekly: last28.length / 4, likes: al, comments: ac, views: avg(posts, function (p) { return p.views; }),
+    rate: followers && al != null ? (al + (ac || 0)) / followers : null };
+}
+function aRakip(d, box) {
+  var c = cur(), names = c.rivals || [], data = d.rivals || {}, rh = store(akey("rhist")) || {}, hist = store(akey("hist")) || [];
+  box.appendChild(h("h2", { text: "Rakip takibi" }));
+  var inp = h("input", { class: "inp", type: "text", placeholder: "Kullanıcı adı (örn. ornekhesap)", autocapitalize: "off", autocomplete: "off", spellcheck: "false" });
+  box.appendChild(h("div", { class: "card" }, [
+    h("div", { class: "row" }, [
+      h("div", { class: "grow" }, [inp]),
+      h("button", { class: "chip on", text: state.rbusy ? "Ekleniyor…" : "Ekle", disabled: state.rbusy || state.loading || names.length >= 5, onclick: function () {
+        var n = cleanUser(inp.value);
+        if (!n) { state.rmsg = "Geçerli bir kullanıcı adı yaz (harf, rakam, nokta, alt çizgi)."; render(); return; }
+        if (names.indexOf(n) >= 0 || n === (d.me.username || "").toLowerCase()) { state.rmsg = "Bu hesap zaten listede."; render(); return; }
+        state.rbusy = true; state.rmsg = ""; render();
+        findRoot().then(function (root) { return fetchRival(root, n); }).catch(function (e) { return { err: e.message }; }).then(function (res) {
+          state.rbusy = false;
+          if (res.err) { state.rmsg = "@" + n + " eklenemedi: " + res.err; render(); return; }
+          setCur({ rivals: names.concat([n]) });
+          d.rivals = d.rivals || {}; d.rivals[n] = res;
+          saveRivalHist(n, res, Date.now()); store(akey("cache"), d);
+          render();
+        });
+      } })
+    ]),
+    state.rmsg ? h("p", { class: "small", style: "margin:10px 0 0;color:var(--bad)", text: state.rmsg }) : null,
+    h("p", { class: "small mut", style: "margin:10px 0 0", text: "En fazla 5 hesap. Yalnızca profesyonel (işletme ya da içerik üretici) hesaplar eklenebilir; kişisel ve gizli hesapların verisini Instagram vermez." })
+  ]));
+  if (!names.length) return;
+
+  var my = rivalStats(d.media.map(function (m) { return { timestamp: m.timestamp, likes: m.likes, comments: m.comments, views: isReel(m) ? m.views : null }; }), d.me.followers_count, d.at);
+  var fdMe = followerDelta(hist, 7);
+  var cols = [{ label: "Sen", v: [d.me.followers_count, fdMe ? fdMe.d : null, my.weekly, my.likes, my.comments, my.views, my.rate] }];
+  names.forEach(function (n) {
+    var r = data[n];
+    if (!r || r.err) { cols.push({ label: "@" + n, v: [null, null, null, null, null, null, null] }); return; }
+    var s = rivalStats(r.posts, r.followers, r.at), fd = followerDelta(rh[n] || [], 7);
+    cols.push({ label: "@" + n, v: [r.followers, fd ? fd.d : null, s.weekly, s.likes, s.comments, s.views, s.rate] });
+  });
+  var labels = ["Takipçi", "Takipçi değişimi (7 gün)", "Haftalık gönderi", "Ort. beğeni", "Ort. yorum", "Ort. video izlenmesi", "Etkileşim oranı"];
+  var one = function (v) { return v == null ? "–" : v.toFixed(1).replace(".", ","); };
+  var fmts = [num, function (v) { return v == null ? "–" : signed(v); }, one, num, num, num, pct];
+  var tpl = "grid-template-columns:118px" + cols.map(function () { return " minmax(78px,1fr)"; }).join("") + ";min-width:" + (118 + cols.length * 86) + "px";
+  var inner = h("div");
+  inner.appendChild(h("div", { class: "tbl", style: tpl }, [h("span")].concat(cols.map(function (cl) { return h("b", { class: "small", style: "text-align:right;word-break:break-all", text: cl.label }); }))));
+  labels.forEach(function (lab, i) {
+    var vals = cols.map(function (cl) { return cl.v[i]; });
+    var best = Math.max.apply(null, vals.map(function (v) { return v == null ? -Infinity : v; }));
+    var nBest = vals.filter(function (v) { return v === best; }).length;
+    inner.appendChild(h("div", { class: "tbl", style: tpl }, [h("span", { class: "small mut", text: lab })].concat(vals.map(function (v) {
+      return h("b", { style: "text-align:right", class: v != null && v === best && nBest === 1 ? "up" : "", text: fmts[i](v) });
+    }))));
+  });
+  box.appendChild(h("h2", { text: "Yan yana" }));
+  box.appendChild(h("div", { class: "card", style: "overflow-x:auto" }, [inner]));
+
+  names.forEach(function (n) {
+    var r = data[n];
+    box.appendChild(h("div", { class: "row between", style: "margin:22px 2px 8px" }, [
+      h("b", { text: "@" + n }),
+      h("button", { class: "chip", text: "Kaldır", onclick: function () {
+        if (this.dataset.sure !== "1") { this.dataset.sure = "1"; this.textContent = "Emin misin?"; return; }
+        setCur({ rivals: names.filter(function (x) { return x !== n; }) });
+        if (d.rivals) delete d.rivals[n];
+        store(akey("cache"), d); render();
+      } })
+    ]));
+    if (!r) { box.appendChild(emptyCard("Veri henüz alınmadı; Yenile'ye dokun.")); return; }
+    if (r.err) { box.appendChild(emptyCard("Veri alınamadı: " + r.err)); return; }
+    var top = r.posts.slice().sort(function (a, b) { return ((b.likes || 0) + (b.comments || 0)) - ((a.likes || 0) + (a.comments || 0)); }).slice(0, 3);
+    var card = h("div", { class: "card", style: "padding:2px 14px" });
+    top.forEach(function (p, i) {
+      card.appendChild(h("a", { class: "post", href: p.permalink || "#", target: "_blank", rel: "noopener noreferrer" }, [
+        h("div", { class: "grow" }, [
+          h("div", { class: "rank", text: "En iyi #" + (i + 1) + " · " + p.kind + " · " + dateStr(p.timestamp) }),
+          h("div", { class: "cap", text: p.caption || "(açıklama yok)" }),
+          h("div", { class: "nums" }, [
+            h("span", null, [h("b", { text: num(p.likes) }), " beğeni"]),
+            h("span", null, [h("b", { text: num(p.comments) }), " yorum"]),
+            p.views != null ? h("span", null, [h("b", { text: num(p.views) }), " izlenme"]) : null
+          ])
+        ])
+      ]));
+    });
+    if (!top.length) card.appendChild(h("p", { class: "mut", style: "padding:14px 0;margin:0", text: "Gönderi bulunamadı." }));
+    box.appendChild(card);
+  });
+  box.appendChild(note("Rakamlar hesapların son 25 gönderisine göredir. Etkileşim oranı burada (beğeni + yorum) ÷ takipçi olarak hesaplanır, çünkü başkasının erişim, kaydetme ve paylaşım rakamlarını Instagram vermez. Beğenisini gizleyen hesaplarda beğeni boş gelir. Takipçi değişimi, paneli açtığın günlerde alınan kayıtlardan hesaplanır."));
+}
+
+/* ---------- Gidişat: yeni gönderi olgun gönderilere göre nasıl gidiyor ---------- */
+function pace(d, m) {
+  if (m.views == null) return null;
+  var mature = d.media.filter(function (x) { return x.id !== m.id && d.at - ts(x) > 7 * DAY && x.views != null; });
+  var same = mature.filter(function (x) { return kindOf(x) === kindOf(m); });
+  var pool = same.length >= 3 ? same : mature;
+  if (pool.length < 3) return null;
+  var a = avg(pool, function (x) { return x.views; });
+  if (!a) return null;
+  var age = (d.at - ts(m)) / 3600000;
+  return { age: age, ratio: m.views / a, base: a, n: pool.length, same: same.length >= 3, hot: age <= 72 && m.views >= a };
+}
+function ageStr(hours) { return hours < 48 ? Math.max(1, Math.round(hours)) + " saat" : Math.round(hours / 24) + " gün"; }
+function skipFrac(m) { return m.skip == null ? null : m.skip > 1 ? m.skip / 100 : m.skip; }
+
+/* ---------- Çevrimiçi takipçi haritası ---------- */
+var GUN_KISA = ["Paz", "Pzt", "Sal", "Çar", "Per", "Cum", "Cmt"];
+function onlineTop(o, n) {
+  var cells = [];
+  for (var a = 0; a < 7; a++) for (var b = 0; b < 24; b++) if (o.grid[a][b] != null) cells.push({ day: a, hour: b, v: o.grid[a][b] });
+  return cells.sort(function (x, y) { return y.v - x.v; }).slice(0, n);
+}
+function onlineHours(o) {
+  var out = [];
+  for (var b = 0; b < 24; b++) {
+    var vals = [];
+    for (var a = 0; a < 7; a++) if (o.grid[a][b] != null) vals.push(o.grid[a][b]);
+    if (vals.length) out.push({ hour: b, v: vals.reduce(function (x, y) { return x + y; }, 0) / vals.length });
+  }
+  return out.sort(function (x, y) { return y.v - x.v; });
+}
+function onlineBestDay(o) {
+  var best = null;
+  o.grid.forEach(function (r, a) {
+    var vals = r.filter(function (v) { return v != null; });
+    if (!vals.length) return;
+    var m = vals.reduce(function (x, y) { return x + y; }, 0) / vals.length;
+    if (!best || m > best.v) best = { day: a, v: m };
+  });
+  return best;
+}
+function hourRange(hh) { return ("0" + hh).slice(-2) + ":00–" + ("0" + ((hh + 1) % 24)).slice(-2) + ":00"; }
+function onlineSection(d, box) {
+  var o = d.online;
+  if (!o) return;
+  var max = 0;
+  o.grid.forEach(function (r) { r.forEach(function (v) { if (v > max) max = v; }); });
+  if (!max) return;
+  box.appendChild(h("h2", { text: "Takipçilerin ne zaman çevrimiçi" }));
+  var grid = h("div", { style: "display:grid;grid-template-columns:30px repeat(24,1fr);gap:2px;align-items:center" });
+  grid.appendChild(h("span"));
+  for (var b = 0; b < 24; b++) grid.appendChild(h("span", { class: "mut", style: "font-size:9px;text-align:left", text: b % 6 === 0 ? ("0" + b).slice(-2) : "" }));
+  [1, 2, 3, 4, 5, 6, 0].forEach(function (a) {
+    grid.appendChild(h("span", { class: "mut", style: "font-size:11px", text: GUN_KISA[a] }));
+    for (var b2 = 0; b2 < 24; b2++) {
+      var v = o.grid[a][b2] || 0;
+      grid.appendChild(h("div", { style: "height:16px;border-radius:3px;background:rgba(255,92,138," + (0.07 + 0.93 * v / max).toFixed(2) + ")" }));
+    }
+  });
+  var card = h("div", { class: "card" }, [grid]);
+  box.appendChild(card);
+  var hrs = onlineHours(o), c2 = h("div", { class: "card" });
+  hrs.slice(0, 6).forEach(function (x) { c2.appendChild(barLine(hourRange(x.hour), "ort. " + num(x.v) + " takipçi çevrimiçi", hrs[0].v ? x.v / hrs[0].v : 0)); });
+  box.appendChild(h("h2", { text: "En yoğun saatler (günlerin ortalaması)" }));
+  box.appendChild(c2);
+  var c3 = h("div", { class: "card" });
+  onlineTop(o, 5).forEach(function (c) { c3.appendChild(barLine(GUNLER[c.day] + " " + hourRange(c.hour), "ort. " + num(c.v), c.v / max)); });
+  box.appendChild(h("h2", { text: "En yoğun gün ve saat" }));
+  box.appendChild(c3);
+  box.appendChild(note("Koyu kutular takipçilerinin en çok çevrimiçi olduğu saatlerdir (son " + o.days + " günün ortalaması, telefonunun saatine çevrilmiş). Paylaşımı en koyu saatten biraz önce yapmak genelde iyi sonuç verir. Saatleri Instagram uygulamasındaki “En aktif zamanlar” ile bir kez karşılaştır; kayma görürsen bana yaz."));
+}
+
+/* ---------- Koç: analizlerden çıkan somut öneriler ---------- */
+function coach(d) {
+  var tips = [], posts = d.media, base = avg(posts, score);
+  function add(w, t, x) { tips.push({ w: w, t: t, x: x }); }
+  if (posts.length < 5) { add(1, "Biraz daha veri gerek", "Öneriler en az 5 gönderiyle anlam kazanır. Paylaştıkça bu ekran dolar."); return tips; }
+  function times(a, b) { return (a / b).toFixed(1).replace(".", ",") + " kat"; }
+
+  // yükselişteki gönderi (yalnızca en yenisi)
+  var hotOne = null;
+  posts.slice().sort(function (a, b) { return ts(b) - ts(a); }).forEach(function (m) {
+    var p = pace(d, m);
+    if (!hotOne && p && p.hot) hotOne = { m: m, p: p };
+  });
+  if (hotOne) add(100, "Bir gönderin yükselişte", "“" + ((hotOne.m.caption || "").split("\n")[0].slice(0, 40) || kindOf(hotOne.m)) + "” " + ageStr(hotOne.p.age) + " içinde olgun gönderilerinin ortalamasını geçti (" + num(hotOne.m.views) + " görüntülenme, ortalama " + num(hotOne.p.base) + "). Hikâyende paylaş ve yorumlara hızlı yanıt ver; ivmeyi uzatır.");
+
+  // paylaşım düzeni
+  var sorted = posts.slice().sort(function (a, b) { return ts(b) - ts(a); });
+  var since = (d.at - ts(sorted[0])) / DAY, gaps = [];
+  for (var i = 1; i < sorted.length; i++) gaps.push((ts(sorted[i - 1]) - ts(sorted[i])) / DAY);
+  gaps.sort(function (a, b) { return a - b; });
+  var medGap = gaps[Math.floor(gaps.length / 2)] || 0;
+  if (medGap > 0 && since > Math.max(2, medGap * 2)) add(90, "Ara uzadı", Math.round(since) + " gündür paylaşım yok; normalde yaklaşık " + (medGap < 1 ? "her gün" : Math.round(medGap) + " günde bir") + " paylaşıyorsun. Bugün ya da yarın bir gönderi düzenini korur.");
+  var w0 = weekStart(d.at), thisN = posts.filter(function (m) { return ts(m) >= w0; }).length;
+  var prev4 = posts.filter(function (m) { return ts(m) < w0 && ts(m) >= w0 - 28 * DAY; }).length / 4;
+  if (prev4 >= 1 && thisN < Math.floor(prev4)) add(60, "Bu haftanın hedefi", "Bu hafta " + thisN + " gönderi attın; son dört haftanın ortalaması " + prev4.toFixed(1).replace(".", ",") + ". Pazar akşamına kadar " + (Math.round(prev4) - thisN || 1) + " gönderi daha atarsan ritmin bozulmaz.");
+
+  // en iyi zaman
+  if (d.online) {
+    var top = onlineHours(d.online).slice(0, 3), bd = onlineBestDay(d.online);
+    if (top.length) add(80, "En iyi paylaşım saatlerin", "Takipçilerin en çok şu saatlerde çevrimiçi: " + top.map(function (c) { return hourRange(c.hour); }).join(", ") + (bd ? ". En yoğun gün " + GUNLER[bd.day] : "") + ". Gönderiyi bu saatlerden 30–60 dakika önce paylaş.");
+  } else {
+    var g = {};
+    posts.forEach(function (m) { var k = new Date(m.timestamp).getDay(); (g[k] = g[k] || []).push(m); });
+    var days = Object.keys(g).filter(function (k) { return g[k].length >= 2; }).map(function (k) { return { k: k, a: avg(g[k], score) || 0 }; }).sort(function (a, b) { return b.a - a.a; });
+    if (days.length >= 2 && days[0].a > base * 1.15) add(55, "En iyi günün", GUNLER[days[0].k] + " günü paylaştıkların ortalamadan " + pct((days[0].a - base) / base) + " daha çok izlenmiş. Önemli içeriklerini o güne sakla.");
+  }
+
+  // içerik türü
+  var kg = {};
+  posts.forEach(function (m) { var k = kindOf(m); (kg[k] = kg[k] || []).push(m); });
+  var kinds = Object.keys(kg).filter(function (k) { return kg[k].length >= 3; }).map(function (k) { return { k: k, n: kg[k].length, a: avg(kg[k], score) || 0 }; }).sort(function (a, b) { return b.a - a.a; });
+  if (kinds.length >= 2 && kinds[kinds.length - 1].a > 0 && kinds[0].a >= kinds[kinds.length - 1].a * 1.3) {
+    var hi = kinds[0], lo = kinds[kinds.length - 1];
+    add(75, hi.k + " sende daha iyi çalışıyor", hi.k + " gönderilerin ortalama " + num(hi.a) + " görüntülenme alıyor; " + lo.k + " gönderilerin " + num(lo.a) + " (" + times(hi.a, lo.a) + " fark). Önümüzdeki haftalarda ağırlığı " + hi.k + " tarafına ver.");
+  }
+
+  // kanca
+  var reels = posts.filter(isReel), sk = reels.filter(function (m) { return skipFrac(m) != null; });
+  if (sk.length >= 3) {
+    var bestR = sk.slice().sort(function (a, b) { return skipFrac(a) - skipFrac(b); })[0], avgSkip = avg(sk, skipFrac);
+    add(70, "Açılışını güçlendir", "Reels'lerinde izleyenlerin ortalama " + pct(avgSkip) + " kadarı ilk saniyelerde geçiyor. En iyi tutan videon “" + ((bestR.caption || "").split("\n")[0].slice(0, 40) || dateStr(bestR.timestamp)) + "” (" + pct(skipFrac(bestR)) + "). O videonun ilk 3 saniyesinde ne yaptığına bak ve yeni videolarda tekrarla.");
+  } else {
+    var wr = reels.filter(function (m) { return m.watch != null; });
+    if (wr.length >= 3) {
+      var bw = wr.slice().sort(function (a, b) { return b.watch - a.watch; })[0];
+      add(50, "En uzun izlenen videon", "“" + ((bw.caption || "").split("\n")[0].slice(0, 40) || dateStr(bw.timestamp)) + "” ortalama " + secs(bw.watch) + " izlenmiş; Reels ortalaman " + secs(avg(wr, function (m) { return m.watch; })) + ". Bu videonun konusunu ve açılışını örnek al.");
+    }
+  }
+
+  // etiketler
+  var tg = {};
+  posts.forEach(function (m) { tagsOf(m).forEach(function (t) { (tg[t] = tg[t] || []).push(m); }); });
+  var tl = Object.keys(tg).filter(function (t) { return tg[t].length >= 3; }).map(function (t) { return { t: t, n: tg[t].length, a: avg(tg[t], score) || 0 }; }).sort(function (a, b) { return b.a - a.a; });
+  if (tl.length >= 2 && base) {
+    if (tl[0].a > base * 1.2) add(45, "İşe yarayan etiket", tl[0].t + " geçen " + tl[0].n + " gönderin ortalamadan " + pct((tl[0].a - base) / base) + " daha çok izlenmiş. Uygun içeriklerde kullanmaya devam et.");
+    var wt = tl[tl.length - 1];
+    if (wt.a < base * 0.8) add(40, "Zayıf kalan etiket", wt.t + " geçen " + wt.n + " gönderin ortalamanın " + pct((base - wt.a) / base) + " altında kalmış. Bir süre bu etiketi çıkarıp farkı izle.");
+  }
+
+  // açıklama uzunluğu
+  function plainLen(m) { return (m.caption || "").replace(TAG_RE, "").replace(/\s+/g, " ").trim().length; }
+  var shortP = posts.filter(function (m) { return plainLen(m) <= 120; }), longP = posts.filter(function (m) { return plainLen(m) > 120; });
+  if (shortP.length >= 3 && longP.length >= 3) {
+    var as = avg(shortP, score) || 0, al = avg(longP, score) || 0;
+    if (as > al * 1.25) add(35, "Kısa açıklama daha iyi gidiyor", "120 karakterden kısa açıklamalı gönderilerin ortalama " + num(as) + ", uzun açıklamalılar " + num(al) + " görüntülenme almış.");
+    else if (al > as * 1.25) add(35, "Uzun açıklama daha iyi gidiyor", "120 karakterden uzun açıklamalı gönderilerin ortalama " + num(al) + ", kısa açıklamalılar " + num(as) + " görüntülenme almış.");
+  }
+
+  // keşfet payı ve profil dönüşümü
+  var gr = d.growth || {}, rp = (gr.reach && gr.reach.parts) || {};
+  if (rp.FOLLOWER != null && rp.NON_FOLLOWER != null && rp.FOLLOWER + rp.NON_FOLLOWER > 0) {
+    var share = rp.NON_FOLLOWER / (rp.FOLLOWER + rp.NON_FOLLOWER);
+    if (share < 0.3) add(65, "Keşfete çıkamıyorsun", "Son 28 günde ulaştığın hesapların yalnızca " + pct(share) + " kadarı takipçin değil. Yeni kitleye ulaşmak için paylaşılmaya uygun içerik (liste, ipucu, şaşırtan bilgi) ve Reels dene.");
+    else if (share > 0.6) add(30, "Keşfetten besleniyorsun", "Ulaştığın hesapların " + pct(share) + " kadarı takipçin değil; içeriklerin önerilere çıkıyor. Bu ziyaretçileri takipçiye çevirmek için profil yazını ve sabitlenmiş gönderilerini güncel tut.");
+  }
+  var fu = gr.fu && gr.fu.parts;
+  if (fu && fu.FOLLOWER != null && gr.profileViews >= 50) add(25, "Profil ziyaretinden takibe", "Profilini ziyaret eden her 100 kişiden yaklaşık " + (100 * fu.FOLLOWER / gr.profileViews).toFixed(1).replace(".", ",") + " tanesi takip etmiş. Bu sayı düşük geliyorsa ilk bakışta ne paylaştığını anlatan bir profil yazısı ve en iyi 3 gönderini sabitlemek yardımcı olur.");
+
+  // rakipler
+  var my = rivalStats(posts.map(function (m) { return { timestamp: m.timestamp, likes: m.likes, comments: m.comments }; }), d.me.followers_count, d.at);
+  Object.keys(d.rivals || {}).forEach(function (n) {
+    var r = d.rivals[n];
+    if (!r || r.err || (cur().rivals || []).indexOf(n) < 0) return;
+    var s = rivalStats(r.posts, r.followers, r.at);
+    if (s.weekly >= my.weekly + 2) add(42, "@" + n + " daha sık paylaşıyor", "@" + n + " haftada yaklaşık " + s.weekly.toFixed(1).replace(".", ",") + " gönderi atıyor, sen " + my.weekly.toFixed(1).replace(".", ",") + ".");
+    if (s.rate != null && my.rate != null && s.rate > my.rate * 1.3) add(38, "@" + n + " daha çok etkileşim alıyor", "Takipçi başına etkileşimi " + pct(s.rate) + ", seninki " + pct(my.rate) + ". Rakipler sekmesinden en iyi gönderilerine bakıp neyin tuttuğunu incele.");
+  });
+
+  // en çok paylaşılan
+  var sh = posts.filter(function (m) { return m.shares != null && m.reach; }).sort(function (a, b) { return b.shares / b.reach - a.shares / a.reach; })[0];
+  if (sh && sh.shares >= 5) add(20, "En çok paylaşılan içeriğin", "“" + ((sh.caption || "").split("\n")[0].slice(0, 40) || dateStr(sh.timestamp)) + "” ulaştığı her 100 kişiden " + (100 * sh.shares / sh.reach).toFixed(1).replace(".", ",") + " tanesi tarafından paylaşılmış. Paylaşım yeni kitleye ulaşmanın en güçlü yolu; bu tarzı tekrarla.");
+
+  if (!tips.length) add(1, "Belirgin bir fark yok", "Gönderilerin birbirine yakın performans gösteriyor. Farklı tür, saat ve açılışlar deneyip sonuçları buradan izle.");
+  return tips.sort(function (a, b) { return b.w - a.w; });
+}
+function tipCard(t) { return h("div", { class: "card", style: "margin-bottom:10px" }, [h("b", { text: t.t }), h("p", { class: "small", style: "margin:6px 0 0;color:var(--text);opacity:.86", text: t.x })]); }
+function aKoc(d, box) {
+  box.appendChild(h("h2", { text: "Koç · sana özel öneriler" }));
+  coach(d).forEach(function (t) { box.appendChild(tipCard(t)); });
+  box.appendChild(note("Öneriler yalnızca kendi verinden, sabit kurallarla üretilir; son " + d.media.length + " gönderine ve son 28 günün hesap verisine dayanır. Az gönderiye dayanan farklar tesadüf olabilir."));
+}
+
 function metricsOf(cache, hist) {
   if (!cache) return null;
   var p = cache.media || [], reels = p.filter(isReel), last28 = p.filter(function (m) { return ts(m) >= cache.at - 28 * DAY; });
@@ -954,7 +1333,7 @@ function aKarsilastir(d, box) {
 function viewAnaliz(d) {
   var box = h("div");
   box.appendChild(chipRow(ATABS, state.atab, function (t) { state.atab = t; render(); }));
-  ({ turler: aTurler, zaman: aZaman, reels: aReels, etiket: aEtiket, aciklama: aAciklama, duzen: aDuzen, buyume: aBuyume, karsilastir: aKarsilastir }[state.atab] || aTurler)(d, box);
+  ({ koc: aKoc, rakip: aRakip, turler: aTurler, zaman: aZaman, reels: aReels, etiket: aEtiket, aciklama: aAciklama, duzen: aDuzen, buyume: aBuyume, karsilastir: aKarsilastir }[state.atab] || aKoc)(d, box);
   return box;
 }
 
