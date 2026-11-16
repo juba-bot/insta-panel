@@ -65,11 +65,12 @@ svg{display:block;width:100%;height:auto}
 </nav>
 <script>
 "use strict";
-var API = "https://graph.instagram.com";
+var API_IG = "https://graph.instagram.com";   // "IG..." ile başlayan anahtarlar (Instagram girişi)
+var API_FB = "https://graph.facebook.com";    // "EAA..." ile başlayan anahtarlar (Unified login)
 var DAY = 86400000;
 var app = document.getElementById("app");
 var nav = document.getElementById("nav");
-var state = { view: "ozet", sort: "views", data: null, loading: false, error: "" };
+var state = { view: "ozet", sort: "views", data: null, loading: false, error: "", needId: false };
 
 /* ---------- küçük yardımcılar ---------- */
 function store(k, v) {
@@ -102,7 +103,9 @@ function dateStr(d) { return new Date(d).toLocaleDateString("tr-TR", { day: "num
 function dayKey(t) { var d = new Date(t); return d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate(); }
 
 /* ---------- Instagram API ---------- */
+function isIG() { return /^IG/.test(store("ip_token") || ""); }
 function api(path, params) {
+  var API = isIG() ? API_IG : API_FB;
   var q = Object.keys(params || {}).map(function (k) { return k + "=" + encodeURIComponent(params[k]); });
   q.push("access_token=" + encodeURIComponent(store("ip_token")));
   return fetch(API + path + "?" + q.join("&"), { referrerPolicy: "no-referrer" }).then(function (r) {
@@ -116,10 +119,35 @@ function soft(p) { return p.catch(function () { return null; }); }
 
 function refreshTokenIfNeeded() {
   var at = store("ip_token_at") || 0;
+  if (!isIG()) return Promise.resolve(); // Unified login anahtarı yenilenmez
   if (Date.now() - at < 7 * DAY) return Promise.resolve();
   return soft(api("/refresh_access_token", { grant_type: "ig_refresh_token" }).then(function (j) {
     if (j.access_token) { store("ip_token", j.access_token); store("ip_token_at", Date.now()); }
   }));
+}
+
+// Hesabın API yolunu bulur: Instagram girişinde "/me", Unified login'de "/<hesap kimliği>"
+function findRoot() {
+  if (isIG()) return Promise.resolve("/me");
+  var saved = store("ip_igid");
+  if (saved) return Promise.resolve("/" + saved);
+  function pick(j) {
+    var a = (j && j.data) || [];
+    for (var i = 0; i < a.length; i++) {
+      var x = a[i].instagram_business_account || a[i];
+      if (x && x.id && (a[i].instagram_business_account || x.username)) return x.id;
+    }
+    return null;
+  }
+  return soft(api("/me/assigned_instagram_accounts", { fields: "id,username" })).then(function (j) {
+    return pick(j) || soft(api("/me/instagram_accounts", { fields: "id,username" })).then(pick);
+  }).then(function (id) {
+    return id || soft(api("/me/accounts", { fields: "instagram_business_account{id,username}" })).then(pick);
+  }).then(function (id) {
+    if (!id) { var e = new Error("Hesap bulunamadı"); e.code = "NOACCOUNT"; throw e; }
+    store("ip_igid", id);
+    return "/" + id;
+  });
 }
 
 function mediaInsights(m) {
@@ -146,18 +174,19 @@ function pool(items, size, fn) {
 
 function loadAll() {
   var until = Math.floor(Date.now() / 1000), since = until - 28 * 86400;
-  var out = {};
-  return refreshTokenIfNeeded().then(function () {
-    return api("/me", { fields: "user_id,username,name,profile_picture_url,followers_count,follows_count,media_count" });
+  var out = {}, root = "/me";
+  return refreshTokenIfNeeded().then(findRoot).then(function (r) {
+    root = r;
+    return api(root, { fields: "username,name,profile_picture_url,followers_count,follows_count,media_count" });
   }).then(function (me) {
     out.me = me;
     return Promise.all([
-      api("/me/media", { fields: "id,caption,media_type,media_product_type,thumbnail_url,media_url,permalink,timestamp,like_count,comments_count", limit: 30 }),
-      soft(api("/me/insights", { metric: "reach", period: "day", since: since, until: until })),
-      soft(api("/me/insights", { metric: "reach", period: "day", metric_type: "total_value", since: since, until: until })),
-      soft(api("/me/insights", { metric: "views", period: "day", metric_type: "total_value", since: since, until: until })),
-      soft(api("/me/insights", { metric: "accounts_engaged", period: "day", metric_type: "total_value", since: since, until: until })),
-      soft(api("/me/insights", { metric: "total_interactions", period: "day", metric_type: "total_value", since: since, until: until }))
+      api(root + "/media", { fields: "id,caption,media_type,media_product_type,thumbnail_url,media_url,permalink,timestamp,like_count,comments_count", limit: 30 }),
+      soft(api(root + "/insights", { metric: "reach", period: "day", since: since, until: until })),
+      soft(api(root + "/insights", { metric: "reach", period: "day", metric_type: "total_value", since: since, until: until })),
+      soft(api(root + "/insights", { metric: "views", period: "day", metric_type: "total_value", since: since, until: until })),
+      soft(api(root + "/insights", { metric: "accounts_engaged", period: "day", metric_type: "total_value", since: since, until: until })),
+      soft(api(root + "/insights", { metric: "total_interactions", period: "day", metric_type: "total_value", since: since, until: until }))
     ]);
   }).then(function (r) {
     out.media = (r[0].data || []);
@@ -258,7 +287,7 @@ function viewOzet(d) {
     stat("Görüntülenme", num(t.views)), stat("Erişilen hesap", num(t.reach)),
     stat("Etkileşen hesap", num(t.engaged)), stat("Toplam etkileşim", num(t.interactions))
   ]));
-  if (t.views == null && t.reach == null) box.appendChild(h("p", { class: "mut small", style: "margin-top:8px", text: "Bu veriler gelmedi. Hesabın profesyonel (içerik üretici/işletme) olması ve token'da istatistik izninin bulunması gerekir." }));
+  if (t.views == null && t.reach == null) box.appendChild(h("p", { class: "mut small", style: "margin-top:8px", text: "Bu veriler gelmedi. Büyük olasılıkla anahtarda istatistik izni yok: Meta'da giriş yapılandırmasını (configuration) düzenleyip instagram_manage_insights iznini işaretle, sonra yeni anahtar üretip Ayarlar'dan yeniden bağlan." }));
 
   box.appendChild(h("h2", { text: "Günlük erişim" }));
   box.appendChild(h("div", { class: "card" }, [lineChart(d.reachSeries, "#ff5c8a")]));
@@ -354,10 +383,12 @@ function viewAyarlar(d) {
     h("h2", { text: "Bağlantı" }),
     h("div", { class: "card" }, [
       h("p", { text: "Bağlı hesap: @" + ((d && d.me && d.me.username) || "–") }),
-      h("p", { class: "mut small", text: "Erişim anahtarı yalnızca bu telefonda saklanır ve 60 gün geçerlidir. Uygulamayı açtıkça kendiliğinden yenilenir" + (at ? " (son yenileme: " + dateStr(at) + ")." : ".") + " 60 günden uzun süre hiç açmazsan yeniden anahtar alman gerekir." }),
+      h("p", { class: "mut small", text: isIG()
+        ? "Erişim anahtarı yalnızca bu telefonda saklanır ve 60 gün geçerlidir. Uygulamayı açtıkça kendiliğinden yenilenir" + (at ? " (son yenileme: " + dateStr(at) + ")." : ".") + " 60 günden uzun süre hiç açmazsan yeniden anahtar alman gerekir."
+        : "Erişim anahtarı yalnızca bu telefonda saklanır. Bu tür anahtar kendiliğinden yenilenmez; bir gün çalışmayı bırakırsa Meta'dan yenisini üretip tekrar bağlanman gerekir." }),
       h("button", { class: "btn ghost", text: "Bağlantıyı kes ve verileri sil", onclick: function () {
         if (this.dataset.sure !== "1") { this.dataset.sure = "1"; this.textContent = "Emin misin? Silmek için tekrar dokun"; return; }
-        ["ip_token", "ip_token_at", "ip_cache", "ip_hist"].forEach(function (k) { store(k, null); });
+        ["ip_token", "ip_token_at", "ip_cache", "ip_hist", "ip_igid"].forEach(function (k) { store(k, null); });
         state.data = null; state.error = ""; render();
       } })
     ]),
@@ -371,9 +402,13 @@ function viewAyarlar(d) {
 
 function viewKurulum() {
   var ta = h("textarea", { placeholder: "Erişim anahtarını (token) buraya yapıştır", autocapitalize: "off", autocomplete: "off", spellcheck: "false" });
+  var idIn = h("input", { type: "text", inputmode: "numeric", placeholder: "Instagram hesap kimliği (yalnızca rakam)", style: "width:100%;background:#0b0d11;border:1px solid var(--line);border-radius:12px;padding:10px;margin-top:10px" });
   var btn = h("button", { class: "btn", text: "Bağlan", onclick: function () {
     var v = ta.value.replace(/\s+/g, "");
     if (v.length < 20) { state.error = "Anahtar eksik görünüyor."; render(); return; }
+    var id = idIn.value.replace(/\D+/g, "");
+    store("ip_igid", id || null);
+    state.needId = false;
     store("ip_token", v); store("ip_token_at", Date.now());
     if (store("ip_token") !== v) { state.error = "Bu tarayıcı veri saklamaya izin vermiyor (gizli sekme olabilir). Normal sekmede aç."; render(); return; }
     state.error = ""; refresh();
@@ -386,11 +421,12 @@ function viewKurulum() {
     h("div", { class: "card" }, [
       h("ol", null, [
         h("li", { text: "Instagram hesabın profesyonel (içerik üretici ya da işletme) olmalı." }),
-        h("li", null, [h("a", { href: "https://developers.facebook.com/apps/", target: "_blank", rel: "noopener noreferrer", text: "developers.facebook.com/apps" }), " adresinde bir uygulama oluştur ve Instagram ürününü ekle."]),
-        h("li", { text: "“Instagram girişi ile API kurulumu” bölümünde hesabını ekle, istatistik (insights) iznini ver ve “Token oluştur”a dokun." }),
+        h("li", null, [h("a", { href: "https://developers.facebook.com/apps/", target: "_blank", rel: "noopener noreferrer", text: "developers.facebook.com/apps" }), " adresinde uygulamana “Manage messaging & content on Instagram” kullanım durumunu ekle."]),
+        h("li", { text: "“API setup with Unified login” bölümünde bir yapılandırma oluştur; izinlerde instagram_basic ve instagram_manage_insights işaretli olsun." }),
+        h("li", { text: "“Generate access tokens” bölümünde hesabını ekle, Instagram'dan test daveti onayla ve “Generate token”a dokun." }),
         h("li", { text: "Çıkan uzun anahtarı kopyalayıp aşağıya yapıştır." })
       ]),
-      ta, h("div", { style: "height:10px" }), btn,
+      ta, state.needId ? idIn : null, h("div", { style: "height:10px" }), btn,
       h("p", { class: "mut small", style: "margin:10px 0 0", text: "Anahtar yalnızca bu telefonda saklanır ve sadece Instagram'a gönderilir." })
     ])
   ]);
@@ -420,7 +456,11 @@ function refresh() {
   if (state.loading) return;
   state.loading = true; state.error = ""; render();
   loadAll().then(function (d) { state.data = d; }).catch(function (e) {
-    if (e.code === 190) {
+    if (e.code === "NOACCOUNT") {
+      store("ip_token", null);
+      state.data = null; state.needId = true;
+      state.error = "Anahtar kabul edildi ama bağlı Instagram hesabı kendiliğinden bulunamadı. Anahtarı yeniden yapıştır ve altındaki kutuya Instagram hesap kimliğini (Meta sayfasında hesabının yanında yazan uzun sayı) gir.";
+    } else if (e.code === 190) {
       store("ip_token", null);
       state.data = null;
       state.error = "Erişim anahtarı geçersiz ya da süresi dolmuş. Yeni bir anahtar alıp yapıştır.";
