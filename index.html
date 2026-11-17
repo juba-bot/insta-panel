@@ -57,7 +57,7 @@ div.post{cursor:pointer}
 .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--acc),var(--acc2))}
 .line{margin-bottom:12px}.line:last-child{margin-bottom:0}
 nav{position:fixed;left:0;right:0;bottom:0;display:flex;background:rgba(15,17,21,.94);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-top:1px solid var(--line);padding:6px 6px calc(env(safe-area-inset-bottom) + 6px)}
-nav button{flex:1;background:none;border:0;padding:9px 2px;color:var(--mut);font-size:12px;border-radius:10px}
+nav button{flex:1;background:none;border:0;padding:9px 1px;color:var(--mut);font-size:11.5px;border-radius:10px}
 nav button.on{color:var(--text);font-weight:700;background:var(--card)}
 .msg{border-radius:12px;padding:11px 13px;margin:10px 0;font-size:13.5px;background:#2a1a1f;border:1px solid #5a2a36}
 .spin{width:26px;height:26px;border:3px solid var(--line);border-top-color:var(--acc);border-radius:50%;animation:s 0.8s linear infinite;margin:60px auto 14px}
@@ -73,6 +73,7 @@ svg{display:block;width:100%;height:auto}
   <button data-v="gonderiler">İçerik</button>
   <button data-v="analiz">Analiz</button>
   <button data-v="kitle">Kitle</button>
+  <button data-v="studyo">Stüdyo</button>
   <button data-v="ayarlar">Ayarlar</button>
 </nav>
 <script>
@@ -82,7 +83,9 @@ var API_FB = "https://graph.facebook.com";    // "EAA..." ile başlayan anahtarl
 var DAY = 86400000, CACHE_V = 4;
 var app = document.getElementById("app");
 var nav = document.getElementById("nav");
-var state = { view: "ozet", sort: "views", tab: "posts", period: 7, data: null, loading: false, error: "", needId: false, adding: false, showToken: false, atab: "koc", rsort: "skip", rbusy: false, rmsg: "", detail: null, backY: 0, goalEdit: false, report: false };
+var state = { view: "ozet", sort: "views", tab: "posts", period: 7, data: null, loading: false, error: "", needId: false, adding: false, showToken: false, atab: "koc", rsort: "skip", stErr: "", stOpen: null, speakId: null, recSid: null, audio: null, audioBusy: false, rbusy: false, rmsg: "", detail: null, backY: 0, goalEdit: false, report: false };
+state.st = { tab: "uret", task: "fikir", topic: "", count: 5, dur: 30, prompt: "", title: "", kind: "Fikir", body: "" };
+try { var _st = JSON.parse(localStorage.getItem("ip_st") || "null"); if (_st) Object.keys(_st).forEach(function (k) { state.st[k] = _st[k]; }); } catch (e) {}
 
 /* ---------- küçük yardımcılar ---------- */
 function store(k, v) {
@@ -133,7 +136,7 @@ function setCur(patch) {
 function akey(name) { var c = cur(); return "ip_" + name + "_" + (c ? c.uid : "x"); }
 function removeAccount(uid) {
   var a = accounts().filter(function (x) { return x.uid !== uid; });
-  ["cache", "hist", "stories", "snap", "rhist"].forEach(function (n) { store("ip_" + n + "_" + uid, null); });
+  ["cache", "hist", "stories", "snap", "rhist", "saved"].forEach(function (n) { store("ip_" + n + "_" + uid, null); });
   saveAccounts(a); store("ip_active", 0);
 }
 // Önceki sürümden geçiş: giriş ve takipçi geçmişi korunur
@@ -1422,6 +1425,250 @@ function viewAnaliz(d) {
   return box;
 }
 
+/* ---------- Stüdyo: istem hazırlama, kaydedilenler, ses ---------- */
+var ST_TASKS = [["fikir", "Fikir listesi"], ["senaryo", "Reels senaryosu"], ["aciklama", "Açıklama + etiket"], ["kanca", "Kanca cümleleri"], ["seri", "Seri planı"]];
+var ST_KINDS = ["Fikir", "Senaryo", "Açıklama", "Diğer"];
+function stSave() {
+  var s = state.st;
+  store("ip_st", { task: s.task, topic: s.topic, count: s.count, dur: s.dur, prompt: s.prompt, title: s.title, kind: s.kind, body: s.body });
+}
+function copyText(t, btn) {
+  function ok() { if (btn) { var o = btn.textContent; btn.textContent = "Kopyalandı"; setTimeout(function () { btn.textContent = o; }, 1500); } }
+  function fb() {
+    try {
+      var ta = document.createElement("textarea"); ta.value = t; ta.setAttribute("style", "position:fixed;opacity:0");
+      document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta); ok();
+    } catch (e) { if (btn) btn.textContent = "Kopyalanamadı"; }
+  }
+  try { navigator.clipboard.writeText(t).then(ok, fb); } catch (e) { fb(); }
+}
+function capLine(m) { return (m.caption || "").split("\n")[0].replace(/\s+/g, " ").trim().slice(0, 160); }
+function styleProfile(d) {
+  var posts = d.media, c = cur(), L = [];
+  L.push("Hesap: @" + (d.me.username || "") + " · " + num(d.me.followers_count) + " takipçi · son " + posts.length + " gönderi incelendi.");
+  if (c.note) L.push("Kanal notu: " + c.note);
+  var kg = {};
+  posts.forEach(function (m) { var k = kindOf(m); kg[k] = (kg[k] || 0) + 1; });
+  L.push("İçerik dağılımı: " + Object.keys(kg).map(function (k) { return k + " " + kg[k]; }).join(", ") + ".");
+  var ranked = posts.slice().sort(function (a, b) { return score(b) - score(a); });
+  var tags = {};
+  ranked.slice(0, 10).forEach(function (m) { tagsOf(m).forEach(function (t) { tags[t] = (tags[t] || 0) + 1; }); });
+  var tl = Object.keys(tags).sort(function (a, b) { return tags[b] - tags[a]; }).slice(0, 8);
+  if (tl.length) L.push("En iyi giden gönderilerde sık geçen etiketler: " + tl.join(" ") + ".");
+  var topP = ranked.slice(0, 5);
+  if (topP.length) L.push("En iyi giden gönderilerde ortalama açıklama uzunluğu: " + Math.round(avg(topP, function (m) { return (m.caption || "").replace(TAG_RE, "").replace(/\s+/g, " ").trim().length; })) + " karakter.");
+  topP.forEach(function (m, i) { L.push("En iyi #" + (i + 1) + " (" + kindOf(m) + ", " + num(score(m)) + " görüntülenme): " + (capLine(m) || "(açıklama yok)")); });
+  if (ranked.length >= 8) ranked.slice(-2).forEach(function (m) { L.push("Zayıf kalan (" + kindOf(m) + ", " + num(score(m)) + " görüntülenme): " + (capLine(m) || "(açıklama yok)")); });
+  var sk = posts.filter(function (m) { return isReel(m) && m.skip != null; });
+  if (sk.length >= 3) L.push("Reels'te izleyenlerin ortalama " + pct(avg(sk, skipFrac)) + " kadarı ilk saniyelerde geçiyor.");
+  if (d.online) { var hh = onlineHours(d.online).slice(0, 3); if (hh.length) L.push("Takipçilerin en çok çevrimiçi olduğu saatler: " + hh.map(function (x) { return hourRange(x.hour); }).join(", ") + "."); }
+  return L;
+}
+function buildPrompt(d) {
+  var s = state.st, topic = (s.topic || "").trim(), t;
+  if (s.task === "fikir") t = s.count + " yeni gönderi/video fikri öner." + (topic ? " Tema: " + topic + "." : "") + " Her fikir için: başlık, ilk 3 saniyelik kanca cümlesi, tek cümlelik özet, önerilen tür (Reels, fotoğraf ya da kaydırmalı).";
+  else if (!topic) return null;
+  else if (s.task === "senaryo") t = "“" + topic + "” konusunda yaklaşık " + s.dur + " saniyelik bir Reels senaryosu yaz. Bölümler: kanca (ilk 3 saniye), zaman damgalı sahneler, seslendirme metni, ekrana yazılacak yazılar, kapanış çağrısı.";
+  else if (s.task === "aciklama") t = "“" + topic + "” gönderisi için 3 farklı açıklama yaz (kısa, orta, uzun) ve her biri için uygun 8 etiket öner.";
+  else if (s.task === "kanca") t = "“" + topic + "” videosu için birbirinden farklı 10 açılış (kanca) cümlesi yaz. Her biri ilk 3 saniyede söylenebilecek kadar kısa olsun.";
+  else t = "“" + topic + "” konusunda " + s.count + " bölümlük bir seri planı yap. Her bölüm için: başlık, kanca cümlesi, ana olay, bir sonraki bölüme merak bırakan kapanış.";
+  return "Sen deneyimli bir sosyal medya içerik yazarısın. Aşağıda Instagram hesabımın gerçek verilerinden çıkan tarz özeti var. Bu tona ve biçime uygun içerik üret.\n\nHESAP ÖZETİ\n" + styleProfile(d).join("\n") +
+    "\n\nGÖREV\n" + t + "\n\nKURALLAR\n- Türkçe yaz, hesabın tonunu koru.\n- Örnek gönderilerin kopyasını değil, benzer tarzda yeni içerik üret.\n- Rakam ya da gerçek bilgi uydurma.\n- Cevabı başlıklarla düzenli ver; kopyalayıp kaydedeceğim.";
+}
+
+/* ses: telefonun kendi sesli okuması ve mikrofon kaydı (hepsi telefonda kalır) */
+function speak(text, onend) {
+  var ss = window.speechSynthesis;
+  if (!ss || !window.SpeechSynthesisUtterance) return false;
+  ss.cancel();
+  var clean = text.replace(/[#*_`>]/g, "").replace(/\s*\n+\s*/g, ". ").replace(/\.\s*\./g, "."), sents = clean.match(/[^.!?…]+[.!?…]*/g) || [clean], chunks = [], buf = "";
+  sents.forEach(function (x) { if ((buf + x).length > 200 && buf) { chunks.push(buf); buf = x; } else buf += x; });
+  if (buf) chunks.push(buf);
+  var v = (ss.getVoices() || []).filter(function (x) { return /^tr/i.test(x.lang); })[0];
+  chunks.forEach(function (t, i) {
+    var u = new SpeechSynthesisUtterance(t.trim()); u.lang = "tr-TR"; if (v) u.voice = v; u.rate = 0.95;
+    if (i === chunks.length - 1) { u.onend = onend; u.onerror = onend; }
+    ss.speak(u);
+  });
+  return true;
+}
+function stopSpeak() { try { window.speechSynthesis.cancel(); } catch (e) {} }
+function idbTx(mode, fn) {
+  return new Promise(function (res, rej) {
+    if (!window.indexedDB) return rej(new Error("yok"));
+    var r = indexedDB.open("ip_audio", 1);
+    r.onupgradeneeded = function () { r.result.createObjectStore("a", { keyPath: "id" }); };
+    r.onerror = function () { rej(r.error); };
+    r.onsuccess = function () {
+      var db = r.result, tx = db.transaction("a", mode), out = fn(tx.objectStore("a"));
+      tx.oncomplete = function () { res(out && out.result); };
+      tx.onerror = tx.onabort = function () { rej(tx.error); };
+    };
+  });
+}
+function loadAudio() {
+  state.audioBusy = true;
+  return idbTx("readonly", function (st) { return st.getAll(); }).then(function (all) {
+    var uid = cur() && cur().uid, map = {};
+    Object.keys(state.audio || {}).forEach(function (k) { state.audio[k].forEach(function (a) { try { URL.revokeObjectURL(a.url); } catch (e) {} }); });
+    (all || []).filter(function (r) { return r.uid === uid; }).sort(function (a, b) { return a.at - b.at; }).forEach(function (r) {
+      (map[r.sid] = map[r.sid] || []).push({ id: r.id, at: r.at, blob: r.blob, mime: r.mime, url: URL.createObjectURL(r.blob) });
+    });
+    state.audio = map;
+  }).catch(function () { state.audio = {}; }).then(function () { state.audioBusy = false; if (state.view === "studyo") render(); });
+}
+var rec = null;
+function stopRec() { if (rec) { try { rec.stop(); } catch (e) {} } }
+function startRec(sid) {
+  if (rec) stopRec();
+  if (!navigator.mediaDevices || !window.MediaRecorder) { state.stErr = "Bu tarayıcı ses kaydını desteklemiyor. Telefonun Ses Kaydı uygulamasını kullanabilirsin."; render(); return; }
+  navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+    var mime = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"].filter(function (t) { return MediaRecorder.isTypeSupported(t); })[0] || "";
+    var mr = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream), chunks = [], uid = cur().uid;
+    mr.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+    mr.onstop = function () {
+      stream.getTracks().forEach(function (t) { t.stop(); });
+      var blob = new Blob(chunks, { type: mr.mimeType || mime || "audio/mp4" });
+      rec = null; state.recSid = null;
+      if (!blob.size) { render(); return; }
+      idbTx("readwrite", function (st) { return st.put({ id: "r" + Date.now().toString(36), uid: uid, sid: sid, at: Date.now(), mime: blob.type, blob: blob }); })
+        .then(loadAudio).catch(function () { state.stErr = "Kayıt telefonda saklanamadı."; render(); });
+    };
+    mr.start(); rec = mr; state.recSid = sid; state.stErr = ""; render();
+  }).catch(function () { state.stErr = "Mikrofon açılmadı. Safari ya da uygulama için mikrofon iznini kontrol et."; render(); });
+}
+function shareAudio(a) {
+  try {
+    var ext = /webm/.test(a.mime) ? "webm" : "m4a", f = new File([a.blob], "ses-" + dateStr(a.at).replace(/\s+/g, "-") + "." + ext, { type: a.mime });
+    if (navigator.canShare && navigator.canShare({ files: [f] })) { navigator.share({ files: [f] }).catch(function () {}); return; }
+  } catch (e) {}
+  state.stErr = "Paylaşım açılmadı. Ses oynatıcıdaki menüden kaydedebilirsin."; render();
+}
+
+function stUret(d, box) {
+  var s = state.st, c = cur();
+  box.appendChild(h("h2", { text: "Kanal notu (isteğe bağlı)" }));
+  var noteEl = h("textarea", { placeholder: "Kanalın ne hakkında? Ton, hedef kitle, seri adı… (örn. 16 bit korku oyunu serisi, avcı kardeşler)", style: "min-height:70px", text: c.note || "" });
+  noteEl.addEventListener("input", function () { setCur({ note: noteEl.value }); });
+  box.appendChild(h("div", { class: "card" }, [noteEl, h("p", { class: "mut small", style: "margin:8px 0 0", text: "Bu not her istemin başına eklenir; ChatGPT hesabının konusunu böyle öğrenir." })]));
+
+  box.appendChild(h("h2", { text: "Ne üretelim?" }));
+  box.appendChild(chipRow(ST_TASKS, s.task, function (t) { s.task = t; s.prompt = ""; state.stErr = ""; stSave(); render(); }));
+  var need = s.task !== "fikir";
+  var topic = h("input", { class: "inp", type: "text", placeholder: need ? "Konu (örn. ilk bölümün açılış sahnesi)" : "Tema (isteğe bağlı)", value: s.topic || "" });
+  topic.addEventListener("input", function () { s.topic = topic.value; stSave(); });
+  var card = h("div", { class: "card" }, [topic]);
+  if (s.task === "fikir" || s.task === "seri") {
+    card.appendChild(h("div", { style: "height:10px" }));
+    card.appendChild(chipRow(s.task === "fikir" ? [[3, "3 fikir"], [5, "5 fikir"], [10, "10 fikir"]] : [[3, "3 bölüm"], [5, "5 bölüm"], [8, "8 bölüm"]], s.count, function (n) { s.count = n; s.prompt = ""; stSave(); render(); }));
+  }
+  if (s.task === "senaryo") {
+    card.appendChild(h("div", { style: "height:10px" }));
+    card.appendChild(chipRow([[15, "15 sn"], [30, "30 sn"], [60, "60 sn"]], s.dur, function (n) { s.dur = n; s.prompt = ""; stSave(); render(); }));
+  }
+  card.appendChild(h("div", { style: "height:4px" }));
+  card.appendChild(h("button", { class: "btn", text: "İstemi hazırla", onclick: function () {
+    var p = buildPrompt(d);
+    if (!p) { state.stErr = "Bu görev için bir konu yaz."; render(); return; }
+    state.stErr = ""; s.prompt = p; stSave(); render();
+  } }));
+  box.appendChild(card);
+  if (s.prompt) {
+    box.appendChild(h("h2", { text: "Hazır istem" }));
+    box.appendChild(h("div", { class: "card" }, [
+      h("textarea", { readonly: "readonly", style: "min-height:200px", text: s.prompt }), h("div", { style: "height:10px" }),
+      h("button", { class: "btn", text: "Kopyala", onclick: function () { copyText(s.prompt, this); } }),
+      h("a", { class: "btn ghost", style: "text-align:center;text-decoration:none", href: "https://chatgpt.com/", target: "_blank", rel: "noopener noreferrer", text: "ChatGPT'yi aç" }),
+      h("p", { class: "mut small", style: "margin:10px 0 0", text: "İstemi ChatGPT'ye yapıştır, cevabı kopyala, sonra Kaydedilenler sekmesinde yapıştırıp sakla." })
+    ]));
+  }
+}
+function stItem(it) {
+  var open = state.stOpen === it.id, card = h("div", { class: "card", style: "margin-bottom:10px" }), auds = (state.audio && state.audio[it.id]) || [];
+  card.appendChild(h("div", { style: "cursor:pointer", onclick: function () { state.stOpen = open ? null : it.id; render(); } }, [
+    h("b", { text: it.t }), h("div", { class: "small mut", text: it.k + " · " + timeStr(it.at) + (auds.length ? " · " + auds.length + " ses" : "") })
+  ]));
+  card.appendChild(h("div", { style: "white-space:pre-wrap;word-break:break-word;margin-top:8px;font-size:14px;" + (open ? "" : "max-height:4.4em;overflow:hidden"), text: it.b }));
+  var speaking = state.speakId === it.id, recording = state.recSid === it.id;
+  card.appendChild(h("div", { class: "chips", style: "margin-top:10px;padding-bottom:0" }, [
+    h("button", { class: "chip" + (speaking ? " on" : ""), text: speaking ? "Durdur" : "Seslendir", onclick: function () {
+      if (speaking) { stopSpeak(); state.speakId = null; render(); return; }
+      var ok = speak(it.b, function () { if (state.speakId === it.id) { state.speakId = null; if (state.view === "studyo") render(); } });
+      if (!ok) { state.stErr = "Bu tarayıcıda sesli okuma yok."; render(); return; }
+      state.speakId = it.id; state.stErr = ""; render();
+    } }),
+    h("button", { class: "chip" + (recording ? " on" : ""), text: recording ? "Kaydı bitir" : "Sesimi kaydet", onclick: function () { if (recording) stopRec(); else startRec(it.id); } }),
+    h("button", { class: "chip", text: "Kopyala", onclick: function () { copyText(it.b, this); } }),
+    h("button", { class: "chip", text: "Sil", onclick: function () {
+      if (this.dataset.sure !== "1") { this.dataset.sure = "1"; this.textContent = "Emin misin?"; return; }
+      store(akey("saved"), (store(akey("saved")) || []).filter(function (x) { return x.id !== it.id; }));
+      auds.forEach(function (a) { idbTx("readwrite", function (st) { return st["delete"](a.id); }).catch(function () {}); });
+      if (state.audio) delete state.audio[it.id];
+      if (speaking) { stopSpeak(); state.speakId = null; }
+      render();
+    } })
+  ]));
+  if (recording) card.appendChild(h("p", { style: "margin:8px 0 0;color:var(--bad);font-weight:600", text: "● Kayıt alınıyor… bitirince Kaydı bitir'e dokun." }));
+  auds.forEach(function (a) {
+    card.appendChild(h("div", { style: "margin-top:10px" }, [
+      h("audio", { controls: "controls", src: a.url, style: "width:100%" }),
+      h("div", { class: "row between small mut", style: "margin-top:4px" }, [
+        h("span", { text: timeStr(a.at) }),
+        h("span", null, [
+          h("button", { class: "chip", text: "Paylaş / Kaydet", style: "margin-right:6px", onclick: function () { shareAudio(a); } }),
+          h("button", { class: "chip", text: "Sil", onclick: function () {
+            if (this.dataset.sure !== "1") { this.dataset.sure = "1"; this.textContent = "Emin misin?"; return; }
+            idbTx("readwrite", function (st) { return st["delete"](a.id); }).then(loadAudio).catch(function () {});
+          } })
+        ])
+      ])
+    ]));
+  });
+  return card;
+}
+function stKayit(d, box, saved) {
+  var s = state.st;
+  if (!state.audio && !state.audioBusy) loadAudio();
+  box.appendChild(h("h2", { text: "Yeni ekle" }));
+  var title = h("input", { class: "inp", type: "text", placeholder: "Başlık", value: s.title || "" });
+  var body = h("textarea", { placeholder: "ChatGPT'den kopyaladığın metni buraya yapıştır", style: "min-height:140px;margin-top:10px", text: s.body || "" });
+  title.addEventListener("input", function () { s.title = title.value; stSave(); });
+  body.addEventListener("input", function () { s.body = body.value; stSave(); });
+  box.appendChild(h("div", { class: "card" }, [
+    title, h("div", { style: "height:10px" }),
+    chipRow(ST_KINDS.map(function (k) { return [k, k]; }), s.kind, function (k) { s.kind = k; stSave(); render(); }),
+    body, h("div", { style: "height:10px" }),
+    h("button", { class: "btn", text: "Kaydet", onclick: function () {
+      var b = body.value.trim();
+      if (!b) { state.stErr = "Önce kaydedilecek metni yapıştır."; render(); return; }
+      var items = store(akey("saved")) || [];
+      items.unshift({ id: "s" + Date.now().toString(36), t: title.value.trim() || b.split("\n")[0].slice(0, 50), k: s.kind, b: b, at: Date.now() });
+      store(akey("saved"), items);
+      if ((store(akey("saved")) || []).length !== items.length) { state.stErr = "Telefonun hafızasına yazılamadı (gizli sekme olabilir)."; render(); return; }
+      s.title = ""; s.body = ""; state.stErr = ""; stSave(); render();
+    } })
+  ]));
+  box.appendChild(h("h2", { text: "Kaydedilenler" }));
+  if (!saved.length) { box.appendChild(emptyCard("Henüz kayıt yok.")); return; }
+  saved.forEach(function (it) { box.appendChild(stItem(it)); });
+  box.appendChild(note("Kayıtlar ve sesler yalnızca bu telefonda saklanır. Safari verilerini silersen ya da telefon değiştirirsen kaybolur; önemli metinleri Notlar'a kopyalamayı unutma."));
+}
+function stTarz(d, box) {
+  box.appendChild(h("h2", { text: "Panelin gördüğü tarzın" }));
+  var L = styleProfile(d), card = h("div", { class: "card" });
+  L.forEach(function (x) { card.appendChild(h("p", { class: "small", style: "margin:0 0 8px;word-break:break-word", text: x })); });
+  card.appendChild(h("button", { class: "btn ghost", text: "Özeti kopyala", onclick: function () { copyText(L.join("\n"), this); } }));
+  box.appendChild(card);
+  box.appendChild(note("Bu özet, hazırlanan istemlere otomatik eklenir. Panel görsellerin üslubunu okuyamaz; ChatGPT'ye birkaç kapak görselini kendin yükleyip “bu görsel dilini koru” diyebilirsin."));
+}
+function viewStudyo(d) {
+  var s = state.st, box = h("div"), saved = store(akey("saved")) || [];
+  box.appendChild(chipRow([["uret", "Üret"], ["kayit", "Kaydedilenler (" + saved.length + ")"], ["tarz", "Tarzım"]], s.tab, function (t) { s.tab = t; state.stErr = ""; render(); }));
+  if (state.stErr) box.appendChild(h("div", { class: "msg", text: state.stErr }));
+  ({ uret: stUret, kayit: stKayit, tarz: stTarz }[s.tab] || stUret)(d, box, saved);
+  return box;
+}
+
 /* ---------- Kitle ---------- */
 var CINSIYET = { F: "Kadın", M: "Erkek", U: "Belirtilmemiş" };
 function regionName(code) {
@@ -1506,6 +1753,7 @@ function viewAyarlar() {
     h("p", { text: "iPhone: Safari'de Paylaş simgesi → Ana Ekrana Ekle. Logo için eski kısayolu silip yeniden ekle." }),
     h("p", { style: "margin:0", text: "Android: Chrome menüsü (⋮) → Ana ekrana ekle." })
   ]));
+  box.appendChild(h("p", { class: "mut small", style: "margin-top:16px", text: "Sürüm: 17 Kasım · Stüdyo" }));
   return box;
 }
 
@@ -1550,6 +1798,7 @@ function switchTo(i) {
   if (state.loading) return;
   store("ip_active", i);
   state.data = loadCache(); state.error = ""; state.showToken = false; state.detail = null; state.goalEdit = false; state.report = false;
+  stopSpeak(); state.speakId = null; state.audio = null; state.stOpen = null;
   render();
   if (!state.data || Date.now() - state.data.at > 15 * 60000) refresh();
 }
@@ -1581,7 +1830,7 @@ function render() {
   if (state.detail) d.media.forEach(function (m) { if (m.id === state.detail) dm = m; });
   if (dm) { app.appendChild(viewDetay(d, dm)); return; }
   state.detail = null;
-  app.appendChild(v === "gonderiler" ? viewIcerik(d) : v === "analiz" ? viewAnaliz(d) : v === "kitle" ? viewKitle(d) : viewOzet(d));
+  app.appendChild(v === "gonderiler" ? viewIcerik(d) : v === "analiz" ? viewAnaliz(d) : v === "kitle" ? viewKitle(d) : v === "studyo" ? viewStudyo(d) : viewOzet(d));
 }
 
 function refresh() {
